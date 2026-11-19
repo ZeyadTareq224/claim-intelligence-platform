@@ -34,7 +34,7 @@ pytest -q backend/tests frontend/tests
 
 If `TEST_DATABASE_URL` is unset, the PostgreSQL integration tests are skipped. Backend tests use transactions and roll back their changes; the UI test creates and deletes a synthetic record in the test database. The test fixture checks that `TEST_DATABASE_URL` differs from `DATABASE_URL`, but different connection strings can still identify the same database; use a genuinely separate database.
 
-GitHub Actions runs the unit tests and PostgreSQL-backed backend and UI integration tests on pushes and pull requests. It creates a separate test database, applies migrations to both databases, and fails if any integration test is skipped.
+GitHub Actions runs Bandit, the unit tests, and PostgreSQL-backed backend and UI integration tests on pushes and pull requests. It creates a separate test database, applies migrations to both databases, and fails if any integration test is skipped.
 
 ## Reset local data
 
