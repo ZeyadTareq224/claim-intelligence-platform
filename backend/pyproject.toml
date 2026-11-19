@@ -15,7 +15,7 @@ test = ["pytest>=8,<10"]
 include = ["app*", "fixtures*"]
 
 [tool.setuptools.package-data]
-"app.ai.evaluation" = ["dataset.json"]
+"app.ai.evaluation" = ["dataset.json", "dataset-v2.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]

@@ -83,13 +83,57 @@ The claim command creates a new analysis on success or provider failure; it neve
 
 ## Run the synthetic AI evaluation
 
-The independently labeled dataset is in `backend/app/ai/evaluation/dataset.json`. The runner uses the configured `AI_PROVIDER` and evaluates each description without saving analyses to the claims database. Live runs consume provider quota and may incur charges on paid projects.
+The original 12-case baseline remains in `backend/app/ai/evaluation/dataset.json` and `docs/week-01-evaluation.md`. Its old scorer called label mismatches “unsupported candidates”; those counts are not verified hallucination counts.
 
-After building the application image, run from the project root:
+The expanded 40-case dataset is `backend/app/ai/evaluation/dataset-v2.json`. The user self-attested in chat that all 40 labels were independently reviewed; the assistant recorded that attestation. The live runner refuses to call a provider unless a human review is recorded for the exact dataset content. To review revised labels, first inspect `docs/week-01-v2-label-review.md` against the descriptions, labels, and source excerpts without using model outputs. A source excerpt is a review aid, not automatic proof. Edit the dataset if corrections are needed, then regenerate the packet:
 
 ```bash
+python -m app.ai.evaluation.review_packet
+```
+
+After personally and independently reviewing all cases, a human reviewer can self-attest using a name or identifier:
+
+```bash
+python -m app.ai.evaluation.label_review \
+  --dataset backend/app/ai/evaluation/dataset-v2.json \
+  --reviewer "reviewer identifier" \
+  --confirm-independent-human-review
+```
+
+The attestation is not proof of identity; it records the reviewer's assertion and a dataset fingerprint. Any subsequent label or evidence change invalidates it. A reviewer may run this command directly. A recorded chat attestation must identify that it was recorded by an assistant on the reviewer's explicit confirmation. The local Python environment must have the project dependencies installed as described in Setup.
+
+After review, rebuild the image so it includes the reviewed dataset, then run from the project root:
+
+```bash
+docker compose build platform
 docker compose run --rm -v "$PWD/docs:/opt/claim-platform/docs" platform \
   python -m app.ai.evaluation --interval-seconds 6
 ```
 
-The interval reduces the chance of hitting free-tier rate limits; it does not guarantee quota availability. The command writes `docs/week-01-evaluation.md` and `docs/week-01-evaluation.json`, replacing previous reports. The Markdown report describes the scoring and limitations, and the JSON includes case-level outputs and errors. Use only synthetic data on Gemini's free tier.
+The run writes `docs/week-01-evaluation-v2.md` and `.json`, leaving the original baseline untouched. Repeated runs overwrite the v2 report files. Live runs consume provider quota and may incur charges on paid projects; the delay does not guarantee quota availability. Use only synthetic data on Gemini's free tier.
+
+### Review factual support
+
+A field mismatch is reported as an extraction error, not automatically as an unsupported fact. The runner queues every emitted fact and uncertainty as **unreviewed**, including facts matching a label. A human must judge support against the full source claim. Until facts are reviewed, the unsupported-fact rate is not measured.
+
+Create a review template tied to a specific run and its exact results:
+
+```bash
+python -m app.ai.evaluation.review \
+  --results docs/week-01-evaluation-v2.json \
+  --template docs/week-01-support-review-v2.json
+```
+
+For each fact, use `supported` when the claim establishes it, `unsupported` when the claim does not substantiate it, and `unclear` when the source or the judgment is ambiguous. For example, if a claim gives two possible dates and the model selects one, mark the field mismatch separately; the date's presence alone does not establish it as the incident date or prove it was invented. Use `unclear` when the support judgment cannot be resolved. Excerpts must be read in context, including negations and instructions embedded in the claim.
+
+An independent human reviewer fills the template's `attestation` (`reviewer` identifier and `independent_human: true`) and each reviewed fact's matching `reviewer`, `verdict` (`supported`, `unsupported`, or `unclear`), and `rationale`. A `supported` verdict also needs at least one exact excerpt from the claim in `evidence`; excerpts are review aids and do not themselves prove support. Leave `verdict` as null for anything not reviewed. Apply the review to new files:
+
+```bash
+python -m app.ai.evaluation.review \
+  --results docs/week-01-evaluation-v2.json \
+  --apply docs/week-01-support-review-v2.json \
+  --output docs/week-01-evaluation-v2-reviewed.json \
+  --report docs/week-01-evaluation-v2-reviewed.md
+```
+
+Reviewed support counts apply only to the facts actually reviewed; unreviewed and unclear facts remain separate. The review tool validates the run, dataset, model output, and source excerpts, but the human's semantic judgment and identity are self-attested.
