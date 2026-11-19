@@ -1,0 +1,434 @@
+{
+  "run_at_utc": "2026-11-19T21:52:57.460768+00:00",
+  "dataset_version": "week-01-v1",
+  "provider": "gemini",
+  "model": "gemini-3.5-flash-lite",
+  "prompt_version": "claim-extraction-v1",
+  "total": 12,
+  "schema_valid": 12,
+  "provider_errors": {},
+  "fields": {
+    "incident_type": {
+      "correct": 12,
+      "evaluated": 12
+    },
+    "incident_date": {
+      "correct": 12,
+      "evaluated": 12
+    },
+    "policy_number": {
+      "correct": 12,
+      "evaluated": 12
+    },
+    "damaged_parts": {
+      "correct": 12,
+      "evaluated": 12
+    },
+    "estimated_repair_cost": {
+      "correct": 12,
+      "evaluated": 12
+    },
+    "currency": {
+      "correct": 12,
+      "evaluated": 12
+    }
+  },
+  "missing_correct": 12,
+  "missing_evaluated": 12,
+  "uncertainty_correct": 3,
+  "uncertainty_evaluated": 3,
+  "unsupported_candidate_cases": 0,
+  "latency_ms": {
+    "mean": 998.6,
+    "min": 867,
+    "max": 1190
+  },
+  "input_tokens": 1845,
+  "input_usage_available": 12,
+  "output_tokens": 1030,
+  "output_usage_available": 12,
+  "cases": [
+    {
+      "id": "01_complete_collision",
+      "scenario": "Complete collision",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-03-12",
+        "policy_number": "EG-1001",
+        "damaged_parts": [
+          "front bumper"
+        ],
+        "estimated_repair_cost": "12000",
+        "currency": "EGP",
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 162,
+      "output_tokens": 97,
+      "latency_ms": 999
+    },
+    {
+      "id": "02_missing_date",
+      "scenario": "Missing date",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "theft",
+        "incident_date": null,
+        "policy_number": "EG-1002",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": [
+          "The incident date was not recorded and is unknown."
+        ]
+      },
+      "actual_missing_fields": [
+        "incident_date"
+      ],
+      "input_tokens": 140,
+      "output_tokens": 87,
+      "latency_ms": 1151
+    },
+    {
+      "id": "03_missing_policy",
+      "scenario": "Missing policy number",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "fire",
+        "incident_date": "2024-05-01",
+        "policy_number": null,
+        "damaged_parts": [
+          "engine"
+        ],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": [
+          "Policy number is unknown"
+        ]
+      },
+      "actual_missing_fields": [
+        "policy_number"
+      ],
+      "input_tokens": 145,
+      "output_tokens": 64,
+      "latency_ms": 979
+    },
+    {
+      "id": "04_multiple_parts",
+      "scenario": "Multiple damaged parts",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-06-02",
+        "policy_number": "EG-1004",
+        "damaged_parts": [
+          "front bumper",
+          "left headlight",
+          "hood"
+        ],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 152,
+      "output_tokens": 100,
+      "latency_ms": 968
+    },
+    {
+      "id": "05_missing_estimate",
+      "scenario": "Missing repair estimate",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-07-03",
+        "policy_number": "EG-1005",
+        "damaged_parts": [
+          "rear bumper"
+        ],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 147,
+      "output_tokens": 89,
+      "latency_ms": 1009
+    },
+    {
+      "id": "06_ambiguous_date",
+      "scenario": "Ambiguous date",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": true,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "theft",
+        "incident_date": null,
+        "policy_number": "EG-1006",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": [
+          "The exact incident date is uncertain, stated as either 2024-08-01 or 2024-08-02."
+        ]
+      },
+      "actual_missing_fields": [
+        "incident_date"
+      ],
+      "input_tokens": 157,
+      "output_tokens": 89,
+      "latency_ms": 986
+    },
+    {
+      "id": "07_contradictory_date",
+      "scenario": "Contradictory dates",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": true,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": null,
+        "policy_number": "EG-1007",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": [
+          "The incident date is ambiguous because two different dates (2024-09-10 and 2024-09-11) were recorded without explanation."
+        ]
+      },
+      "actual_missing_fields": [
+        "incident_date"
+      ],
+      "input_tokens": 164,
+      "output_tokens": 92,
+      "latency_ms": 1190
+    },
+    {
+      "id": "08_theft_no_damage",
+      "scenario": "Theft with no damage information",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "theft",
+        "incident_date": "2024-10-12",
+        "policy_number": "EG-1008",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 146,
+      "output_tokens": 81,
+      "latency_ms": 903
+    },
+    {
+      "id": "09_foreign_currency",
+      "scenario": "Foreign currency",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-11-04",
+        "policy_number": "EG-1009",
+        "damaged_parts": [
+          "front bumper"
+        ],
+        "estimated_repair_cost": "350",
+        "currency": "USD",
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 153,
+      "output_tokens": 71,
+      "latency_ms": 867
+    },
+    {
+      "id": "10_injection",
+      "scenario": "Embedded malicious instructions",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-12-01",
+        "policy_number": "EG-1010",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 165,
+      "output_tokens": 80,
+      "latency_ms": 929
+    },
+    {
+      "id": "11_arabic_collision",
+      "scenario": "Arabic collision",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": null,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": "collision",
+        "incident_date": "2024-02-15",
+        "policy_number": "EG-1011",
+        "damaged_parts": [
+          "المصد الأمامي"
+        ],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": []
+      },
+      "actual_missing_fields": [],
+      "input_tokens": 156,
+      "output_tokens": 69,
+      "latency_ms": 920
+    },
+    {
+      "id": "12_contradictory_type",
+      "scenario": "Contradictory incident types",
+      "valid": true,
+      "field_matches": {
+        "incident_type": true,
+        "incident_date": true,
+        "policy_number": true,
+        "damaged_parts": true,
+        "estimated_repair_cost": true,
+        "currency": true
+      },
+      "missing_fields_correct": true,
+      "uncertainty_handled": true,
+      "unsupported_candidates": [],
+      "actual": {
+        "incident_type": null,
+        "incident_date": "2024-01-10",
+        "policy_number": "EG-1012",
+        "damaged_parts": [],
+        "estimated_repair_cost": null,
+        "currency": null,
+        "uncertainties": [
+          "The incident type is contradictory as the report states the car was both stolen and destroyed in a fire, and neither account is confirmed."
+        ]
+      },
+      "actual_missing_fields": [
+        "incident_type"
+      ],
+      "input_tokens": 158,
+      "output_tokens": 111,
+      "latency_ms": 1082
+    }
+  ]
+}
