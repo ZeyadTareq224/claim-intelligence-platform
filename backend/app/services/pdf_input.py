@@ -35,6 +35,15 @@ class PdfInputService:
         self.max_bytes = max_bytes
         self.max_pages = max_pages
 
+    @classmethod
+    def from_environment(cls, sessions):
+        return cls(
+            sessions,
+            Path(os.environ.get("PDF_STORAGE_DIR", ".document-storage")),
+            int(os.environ.get("PDF_MAX_BYTES", str(25 * 1024 * 1024))),
+            int(os.environ.get("PDF_MAX_PAGES", "200")),
+        )
+
     def validate(self, source_type: str, document_id: UUID, path: Path) -> ValidatedPdf:
         models = {"policy": PolicyDocument, "claim": ClaimDocument}
         if source_type not in models:

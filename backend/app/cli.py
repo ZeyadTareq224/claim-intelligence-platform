@@ -1,7 +1,6 @@
 """Command-line entry point for structured claim extraction."""
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from uuid import UUID
@@ -31,10 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-pdf":
-            storage = Path(os.environ.get("PDF_STORAGE_DIR", ".document-storage"))
-            max_bytes = int(os.environ.get("PDF_MAX_BYTES", str(25 * 1024 * 1024)))
-            max_pages = int(os.environ.get("PDF_MAX_PAGES", "200"))
-            result = PdfInputService(make_sessions(), storage, max_bytes, max_pages).validate(
+            result = PdfInputService.from_environment(make_sessions()).validate(
                 args.source_type, args.document_id, args.file)
             print(json.dumps({"source_type": result.source_type, "document_id": str(result.document_id),
                               "sha256": result.sha256, "page_count": result.page_count}))
