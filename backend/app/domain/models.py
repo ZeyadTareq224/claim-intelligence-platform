@@ -190,3 +190,67 @@ class ClaimAnalysis(Base):
     had_policy_association: Mapped[bool | None]
     created_at: Mapped[datetime] = timestamp()
     claim: Mapped[Claim] = relationship(back_populates="analyses")
+
+
+class DocumentProcessingRun(Base):
+    __tablename__ = "document_processing_runs"
+    __table_args__ = (
+        CheckConstraint("(policy_document_id IS NOT NULL AND claim_document_id IS NULL AND policy_document_version IS NOT NULL) OR (policy_document_id IS NULL AND claim_document_id IS NOT NULL AND policy_document_version IS NULL)", name="ck_run_source"),
+        CheckConstraint("status IN ('completed', 'partial', 'failed')", name="ck_run_status"),
+        CheckConstraint("page_count > 0", name="ck_run_page_count"),
+        UniqueConstraint("policy_document_id", "policy_document_version", "source_hash", "config_hash", name="uq_policy_extraction"),
+        UniqueConstraint("claim_document_id", "source_hash", "config_hash", name="uq_claim_extraction"),
+    )
+    id: Mapped[uuid.UUID] = identity()
+    policy_document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("policy_documents.id"))
+    claim_document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("claim_documents.id"))
+    policy_document_version: Mapped[int | None] = mapped_column(Integer)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    extractor_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = timestamp()
+    pages: Mapped[list[ExtractedPage]] = relationship(back_populates="run", cascade="all, delete-orphan", order_by="ExtractedPage.page_number")
+
+
+class ExtractedPage(Base):
+    __tablename__ = "extracted_pages"
+    __table_args__ = (
+        UniqueConstraint("run_id", "page_number", name="uq_run_page"),
+        CheckConstraint("page_number > 0", name="ck_page_number"),
+        CheckConstraint("status IN ('completed', 'blank', 'failed')", name="ck_page_status"),
+        CheckConstraint("method IS NULL OR method IN ('native', 'ocr', 'mixed')", name="ck_page_method"),
+    )
+    id: Mapped[uuid.UUID] = identity()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("document_processing_runs.id", ondelete="CASCADE"), nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    method: Mapped[str | None] = mapped_column(String(20))
+    reason: Mapped[str | None] = mapped_column(String(80))
+    error: Mapped[str | None] = mapped_column(String(80))
+    width: Mapped[float] = mapped_column(nullable=False)
+    height: Mapped[float] = mapped_column(nullable=False)
+    rotation: Mapped[int] = mapped_column(Integer, nullable=False)
+    run: Mapped[DocumentProcessingRun] = relationship(back_populates="pages")
+    blocks: Mapped[list[ExtractedBlock]] = relationship(back_populates="page", cascade="all, delete-orphan", order_by="ExtractedBlock.block_index")
+
+
+class ExtractedBlock(Base):
+    __tablename__ = "extracted_blocks"
+    __table_args__ = (
+        UniqueConstraint("page_id", "block_index", name="uq_page_block"),
+        CheckConstraint("block_index >= 0", name="ck_block_index"),
+        CheckConstraint("method IN ('native', 'ocr')", name="ck_block_method"),
+    )
+    id: Mapped[uuid.UUID] = identity()
+    page_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("extracted_pages.id", ondelete="CASCADE"), nullable=False)
+    block_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_text: Mapped[str] = mapped_column(Text, nullable=False)
+    block_type: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
+    method: Mapped[str] = mapped_column(String(20), nullable=False)
+    bbox: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
+    confidence: Mapped[float | None]
+    page: Mapped[ExtractedPage] = relationship(back_populates="blocks")
