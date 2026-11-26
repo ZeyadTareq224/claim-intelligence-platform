@@ -196,7 +196,7 @@ class DocumentProcessingRun(Base):
     __tablename__ = "document_processing_runs"
     __table_args__ = (
         CheckConstraint("(policy_document_id IS NOT NULL AND claim_document_id IS NULL AND policy_document_version IS NOT NULL) OR (policy_document_id IS NULL AND claim_document_id IS NOT NULL AND policy_document_version IS NULL)", name="ck_run_source"),
-        CheckConstraint("status IN ('completed', 'partial', 'failed')", name="ck_run_status"),
+        CheckConstraint("status IN ('pending', 'processing', 'completed', 'partial', 'failed')", name="ck_run_status"),
         CheckConstraint("page_count > 0", name="ck_run_page_count"),
         UniqueConstraint("policy_document_id", "policy_document_version", "source_hash", "config_hash", name="uq_policy_extraction"),
         UniqueConstraint("claim_document_id", "source_hash", "config_hash", name="uq_claim_extraction"),
@@ -211,7 +211,10 @@ class DocumentProcessingRun(Base):
     config: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     page_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = timestamp()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pages: Mapped[list[ExtractedPage]] = relationship(back_populates="run", cascade="all, delete-orphan", order_by="ExtractedPage.page_number")
 
 
