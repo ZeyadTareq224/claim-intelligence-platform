@@ -152,7 +152,7 @@ Use `--source-type claim` for a claim document. The command checks the record, r
 
 `app.services.pdf_extraction.PdfExtractor` returns page results with ordered native or OCR text blocks, method, bounding boxes and page-level errors. Construct it with `TesseractOcr(language="eng", timeout=60)` and `PdfExtractor(dpi=200)` to change OCR language, timeout or resolution. The Docker image installs Tesseract and English data; local installations need the `tesseract` executable and the requested language data. OCR images are capped at 25 million pixels by default. Arabic is configurable if its language data is installed, but has not been evaluated.
 
-The extractor can process a validated file, but is not yet connected to the CLI or upload screen and does not persist results. Text usability and image-region detection are heuristics; complex layouts, image-only blank pages, overlapping image and text layers, and reading order can be misclassified. A failed OCR region retains any native blocks but marks the page failed. Bounding boxes use unrotated page coordinates in PDF points. Native extraction currently has no enforced timeout; OCR has a timeout.
+The extractor can process a validated file, but is not yet connected to the CLI or upload screen. Text usability and image-region detection are heuristics; complex layouts, image-only blank pages, overlapping image and text layers, and reading order can be misclassified. A failed OCR region retains any native blocks but marks the page failed. Bounding boxes use unrotated page coordinates in PDF points. Native extraction currently has no enforced timeout; OCR has a timeout.
 
 Run the real OCR smoke test with Tesseract and English language data installed:
 
@@ -160,3 +160,9 @@ Run the real OCR smoke test with Tesseract and English language data installed:
 cd backend
 pytest -q tests/ocr
 ```
+
+## Store extracted document evidence
+
+Apply the latest Alembic migration, then `DocumentIngestionService` can validate a PDF, extract the preserved bytes, and store a processing run with its document reference, source hash, configuration, pages, and ordered blocks in PostgreSQL. Policy document versions are recorded at processing time. Raw block text remains separate from normalized text. The extractor service is available to Python callers; the existing CLI and upload screen do not invoke it yet.
+
+The database rejects duplicate runs for the same document version, source hash and extraction configuration. A changed source or extractor version can be stored as a new run. Returning prior results on repeat, retrying failed pages, and tracking in-progress runs are not implemented yet. Storage failures roll back the run and its pages together; page failures returned by the extractor are saved with their errors.

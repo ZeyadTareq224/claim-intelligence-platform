@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pymupdf
@@ -18,7 +19,7 @@ class FakeSession:
 
     def get(self, model, document_id):
         self.lookups.append((model, document_id))
-        return object() if (model, document_id) in self.existing else None
+        return SimpleNamespace(document_version=1) if (model, document_id) in self.existing else None
 
 
 def service(tmp_path, model=PolicyDocument, document_id=None, **limits):

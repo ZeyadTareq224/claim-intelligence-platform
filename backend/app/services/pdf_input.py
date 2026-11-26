@@ -24,6 +24,7 @@ class ValidatedPdf:
     document_id: UUID
     sha256: str
     page_count: int
+    policy_document_version: int | None = None
 
 
 class PdfInputService:
@@ -49,8 +50,10 @@ class PdfInputService:
         if source_type not in models:
             raise PdfInputError("invalid_source_type")
         with self.sessions() as session:
-            if session.get(models[source_type], document_id) is None:
+            document = session.get(models[source_type], document_id)
+            if document is None:
                 raise PdfInputError("document_not_found")
+            version = document.document_version if source_type == "policy" else None
 
         try:
             # Nonblocking open prevents a supplied FIFO from hanging the command.
@@ -84,7 +87,7 @@ class PdfInputService:
 
         digest = hashlib.sha256(data).hexdigest()
         self._preserve(data, digest)
-        return ValidatedPdf(source_type, document_id, digest, count)
+        return ValidatedPdf(source_type, document_id, digest, count, version)
 
     def _preserve(self, data: bytes, digest: str) -> None:
         try:

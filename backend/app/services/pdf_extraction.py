@@ -90,6 +90,10 @@ class PdfExtractor:
         with pymupdf.open(path) as pdf:
             return [self.extract_page(page) for page in pdf]
 
+    def extract_bytes(self, data: bytes) -> list[PageResult]:
+        with pymupdf.open(stream=data, filetype="pdf") as pdf:
+            return [self.extract_page(page) for page in pdf]
+
     def extract_page(self, page) -> PageResult:
         number = page.number + 1
         # PyMuPDF native text coordinates are in unrotated points.
