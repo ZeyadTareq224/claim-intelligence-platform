@@ -30,9 +30,6 @@ class DocumentIngestionService:
             raise PdfInputError("storage_error") from exc
         if len(data) > self.inputs.max_bytes or hashlib.sha256(data).hexdigest() != source.sha256:
             raise PdfInputError("storage_conflict")
-        pages = self.extractor.extract_bytes(data)
-        if [page.page_number for page in pages] != list(range(1, source.page_count + 1)):
-            raise PdfInputError("page_count_mismatch")
         config = {
             "extractor_version": EXTRACTOR_VERSION,
             "pymupdf_version": pymupdf.VersionBind,
@@ -42,4 +39,19 @@ class DocumentIngestionService:
             "max_ocr_pixels": self.extractor.max_pixels,
         }
         encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
-        return self.repository.save(source, config, hashlib.sha256(encoded).hexdigest(), EXTRACTOR_VERSION, pages)
+        run_id = self.repository.create(source, config, hashlib.sha256(encoded).hexdigest(), EXTRACTOR_VERSION)
+        self.repository.start(run_id)
+        stage = "extraction_failed"
+        try:
+            for expected, page in enumerate(self.extractor.iter_bytes(data), start=1):
+                if page.page_number != expected or expected > source.page_count:
+                    raise PdfInputError("page_count_mismatch")
+                stage = "persistence_failed"
+                self.repository.save_page(run_id, page)
+                stage = "extraction_failed"
+        except Exception as exc:
+            code = exc.code if isinstance(exc, PdfInputError) else stage
+            self.repository.finish(run_id, code)
+            raise
+        self.repository.finish(run_id)
+        return run_id

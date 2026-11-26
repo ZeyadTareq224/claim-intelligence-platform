@@ -130,7 +130,7 @@ def test_page_failure_is_visible_and_successful_blocks_are_saved(sessions, tmp_p
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.extract_bytes = lambda data: [
+    service.extractor.iter_bytes = lambda data: [
         PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("  Kept\n  text  ", "native", (1, 2, 3, 4))]),
         PageResult(2, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
     ]
@@ -163,22 +163,23 @@ def test_tampered_preserved_source_is_rejected_before_extraction(sessions, tmp_p
         assert session.scalar(select(func.count()).select_from(DocumentProcessingRun)) == 0
 
 
-def test_failed_persistence_rolls_back_all_page_records(sessions, tmp_path):
+def test_failed_persistence_keeps_committed_page_records(sessions, tmp_path):
     from app.services.pdf_extraction import PageResult, TextBlock
 
     document_id = make_source(sessions, "claim")
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.extract_bytes = lambda data: [
+    service.extractor.iter_bytes = lambda data: [
         PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("valid", "native")]),
         PageResult(2, "completed", "native", 200, 200, 0, [TextBlock("bad", "invalid")]),
     ]
     with pytest.raises(IntegrityError):
         service.ingest("claim", document_id, path)
     with sessions() as session:
-        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun)) == 0
-        assert session.scalar(select(func.count()).select_from(ExtractedPage)) == 0
+        run = session.scalar(select(DocumentProcessingRun))
+        assert run.status == "partial" and run.error_code == "persistence_failed"
+        assert len(run.pages) == 1 and run.pages[0].blocks[0].raw_text == "valid"
 
 
 def test_extractor_version_creates_a_distinct_run(sessions, tmp_path, monkeypatch):
@@ -204,3 +205,112 @@ def test_database_rejects_two_sources_on_one_run(sessions):
                 policy_document_version=1, source_hash="a" * 64, config_hash="b" * 64,
                 extractor_version="test", config={}, status="completed", page_count=1))
             session.flush()
+
+
+def test_processing_is_visible_and_pages_survive_interruption(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    repository = service.repository
+
+    def interrupted(data):
+        runs = repository.inspect("policy", document_id)
+        assert runs[0]["status"] == "processing" and runs[0]["pages"] == []
+        yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved page", "native")])
+        runs = repository.inspect("policy", document_id)
+        assert runs[0]["status"] == "processing"
+        assert runs[0]["pages"][0]["preview"] == "saved page"
+        raise KeyboardInterrupt()
+
+    service.extractor.iter_bytes = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.ingest("policy", document_id, path)
+    runs = repository.inspect("policy", document_id)
+    assert len(runs) == 1 and runs[0]["status"] == "processing"
+    assert len(runs[0]["pages"]) == 1 and runs[0]["finished_at"] is None
+
+
+def test_unexpected_extraction_error_marks_partial(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+
+    def broken(data):
+        yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved", "native")])
+        raise RuntimeError("sensitive content should not be saved as an error")
+
+    service.extractor.iter_bytes = broken
+    with pytest.raises(RuntimeError):
+        service.ingest("claim", document_id, path)
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "partial" and result["error_code"] == "extraction_failed"
+    assert result["finished_at"] and result["pages"][0]["preview"] == "saved"
+
+
+def test_incomplete_extraction_cannot_complete(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data: [PageResult(1, "blank", None, 200, 200, 0)]
+    run_id = service.ingest("claim", document_id, path)
+    with sessions() as session:
+        run = session.get(DocumentProcessingRun, run_id)
+        assert run.status == "failed" and run.error_code == "page_count_mismatch"
+
+
+def test_cli_inspects_processing_results(sessions, tmp_path, monkeypatch, capsys):
+    import json
+    from app import cli
+
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    run_id = ingestion(sessions, tmp_path).ingest("policy", document_id, path)
+    monkeypatch.setattr(cli, "make_sessions", lambda: sessions)
+    assert cli.main(["inspect-document", "--source-type", "policy", "--document-id", str(document_id)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["runs"][0]["run_id"] == str(run_id)
+    assert result["runs"][0]["status"] == "completed"
+    assert result["runs"][0]["pages"][0]["method"] == "native"
+
+
+def test_pending_run_remains_visible_if_interrupted_before_start(sessions, tmp_path):
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+
+    def interrupt(run_id):
+        raise KeyboardInterrupt()
+
+    service.repository.start = interrupt
+    with pytest.raises(KeyboardInterrupt):
+        service.ingest("claim", document_id, path)
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "pending" and result["started_at"] is None
+    assert result["pages"] == []
+
+
+def test_ocr_failure_with_no_usable_text_is_failed(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data: [
+        PageResult(1, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
+        PageResult(2, "blank", None, 200, 200, 0),
+    ]
+    service.ingest("claim", document_id, path)
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "failed" and result["pages"][0]["error"] == "ocr_timeout"

@@ -165,4 +165,11 @@ pytest -q tests/ocr
 
 Apply the latest Alembic migration, then `DocumentIngestionService` can validate a PDF, extract the preserved bytes, and store a processing run with its document reference, source hash, configuration, pages, and ordered blocks in PostgreSQL. Policy document versions are recorded at processing time. Raw block text remains separate from normalized text. The extractor service is available to Python callers; the existing CLI and upload screen do not invoke it yet.
 
-The database rejects duplicate runs for the same document version, source hash and extraction configuration. A changed source or extractor version can be stored as a new run. Returning prior results on repeat, retrying failed pages, and tracking in-progress runs are not implemented yet. Storage failures roll back the run and its pages together; page failures returned by the extractor are saved with their errors.
+The database rejects duplicate runs for the same document version, source hash and extraction configuration. A changed source or extractor version can be stored as a new run. Each run is recorded as pending and then processing; each page is saved in a separate transaction. Completed, partial and failed statuses reflect the saved pages and any errors. An abrupt interruption leaves the run processing, with saved pages available; it cannot yet be distinguished automatically from a live run. Returning prior results on repeat and retrying failed or interrupted pages are not implemented yet.
+
+Inspect all runs for an existing document (the output includes short text previews):
+
+```bash
+cd backend
+python -m app.cli inspect-document --source-type policy --document-id <document-uuid>
+```

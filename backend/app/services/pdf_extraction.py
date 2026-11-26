@@ -91,8 +91,17 @@ class PdfExtractor:
             return [self.extract_page(page) for page in pdf]
 
     def extract_bytes(self, data: bytes) -> list[PageResult]:
+        return list(self.iter_bytes(data))
+
+    def iter_bytes(self, data: bytes):
         with pymupdf.open(stream=data, filetype="pdf") as pdf:
-            return [self.extract_page(page) for page in pdf]
+            for index in range(pdf.page_count):
+                try:
+                    page = pdf.load_page(index)
+                except (RuntimeError, ValueError):
+                    yield PageResult(index + 1, "failed", None, 0, 0, 0, error="page_load_failed")
+                    continue
+                yield self.extract_page(page)
 
     def extract_page(self, page) -> PageResult:
         number = page.number + 1

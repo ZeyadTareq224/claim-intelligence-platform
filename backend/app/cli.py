@@ -12,6 +12,7 @@ from app.ai.providers.config import make_provider
 from app.domain.models import AnalysisStatus
 from app.persistence.db import make_sessions
 from app.repositories.claims import ClaimNotFound, ClaimRepository
+from app.repositories.documents import DocumentRepository
 from app.services.claim_service import ClaimExtractionService
 from app.services.pdf_input import PdfInputError, PdfInputService
 
@@ -27,6 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--source-type", choices=("policy", "claim"), required=True)
     validate.add_argument("--document-id", type=UUID, required=True)
     validate.add_argument("--file", type=Path, required=True)
+    inspect = commands.add_parser("inspect-document", help="inspect document processing runs")
+    inspect.add_argument("--source-type", choices=("policy", "claim"), required=True)
+    inspect.add_argument("--document-id", type=UUID, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-pdf":
@@ -34,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.source_type, args.document_id, args.file)
             print(json.dumps({"source_type": result.source_type, "document_id": str(result.document_id),
                               "sha256": result.sha256, "page_count": result.page_count}))
+            return 0
+        if args.command == "inspect-document":
+            runs = DocumentRepository(make_sessions()).inspect(args.source_type, args.document_id)
+            print(json.dumps({"source_type": args.source_type, "document_id": str(args.document_id),
+                              "runs": runs}, ensure_ascii=False, indent=2))
             return 0
         provider = make_provider()
         if args.claim_id is not None:
