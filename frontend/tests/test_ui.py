@@ -40,6 +40,52 @@ def test_organization_crud_and_all_screens(ui):
     next(x for x in ui.button if x.label == "Delete").click().run()
     assert not ui.exception and ui.success
 
-    for name in ("Vehicles", "Policies", "Policy clauses", "Claims", "Claim documents", "Policy documents", "Claim analyses"):
+    for name in ("Vehicles", "Policies", "Policy clauses", "Claims", "Claim documents", "Policy documents", "Claim analyses", "PDF upload"):
         ui.radio[0].set_value(name).run()
         assert not ui.exception and not ui.error, name
+
+
+def test_pdf_upload_validates_and_preserves(ui, monkeypatch, tmp_path):
+    from datetime import date
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    import pymupdf
+    import streamlit as st
+    from sqlalchemy import create_engine, delete
+    from sqlalchemy.orm import Session
+    from app.domain.models import Organization, Vehicle, Policy, PolicyDocument, PolicyType, PolicyStatus
+
+    engine = create_engine(os.environ["TEST_DATABASE_URL"])
+    org_id, vehicle_id, policy_id, document_id = (uuid4() for _ in range(4))
+    filename = f"upload-{document_id}.pdf"
+    with Session(engine) as session:
+        session.add(Organization(id=org_id, name="Upload test", code=org_id.hex))
+        session.flush()
+        session.add(Vehicle(id=vehicle_id, organization_id=org_id, plate_number="TEST", make="Test", model="Test", manufacture_year=2020))
+        session.flush()
+        session.add(Policy(id=policy_id, organization_id=org_id, vehicle_id=vehicle_id, policy_number="P1", policy_type=PolicyType.MOTOR_COMPREHENSIVE, status=PolicyStatus.ACTIVE, effective_date=date(2024, 1, 1), expiration_date=date(2025, 1, 1), sum_insured=Decimal("100"), currency="EGP"))
+        session.flush()
+        session.add(PolicyDocument(id=document_id, policy_id=policy_id, filename=filename, content_type="application/pdf", storage_key="test", document_version=1))
+        session.commit()
+    try:
+        pdf = pymupdf.open()
+        pdf.new_page().insert_text((72, 72), "Synthetic policy")
+        data = pdf.tobytes()
+        pdf.close()
+        monkeypatch.setenv("PDF_STORAGE_DIR", str(tmp_path))
+        monkeypatch.setattr(st, "file_uploader", lambda *args, **kwargs: SimpleNamespace(size=len(data), getvalue=lambda: data))
+        ui.radio[0].set_value("PDF upload").run()
+        document = next(item for item in ui.selectbox if item.label == "Existing document")
+        assert any(filename in label for label in document.options)
+        document.set_value(document_id).run()
+        next(item for item in ui.button if item.label == "Validate and save PDF").click().run()
+        assert not ui.exception and not ui.error
+        assert any("PDF validated and saved" in item.value for item in ui.success)
+        assert [path.read_bytes() for path in tmp_path.iterdir()] == [data]
+    finally:
+        with Session(engine) as session:
+            for model, ident in ((PolicyDocument, document_id), (Policy, policy_id), (Vehicle, vehicle_id), (Organization, org_id)):
+                session.execute(delete(model).where(model.id == ident))
+            session.commit()
+        engine.dispose()

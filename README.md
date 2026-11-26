@@ -38,7 +38,7 @@ GitHub Actions runs Bandit, the unit tests, and PostgreSQL-backed backend and UI
 
 ## Reset local data
 
-`docker compose down -v` permanently deletes the Compose database volume, including any local data and analyses. To recreate an empty local database and its fixtures, run that command only when the data is disposable, then repeat the setup steps above.
+`docker compose down -v` permanently deletes the Compose database and PDF storage volumes, including local data, analyses, and saved PDFs. To recreate an empty local database and its fixtures, run that command only when the data is disposable, then repeat the setup steps above.
 
 ## Current limitations
 
@@ -56,7 +56,7 @@ docker compose run --rm platform python -m fixtures.seed
 docker compose up -d platform
 ```
 
-The platform container connects to PostgreSQL at `db:5432` on the Compose network. If host port 5432 is occupied, export `POSTGRES_PORT=55433` before running the Compose commands. The host connection URL must then use port 55433; the container connection remains on port 5432. Keep the same `POSTGRES_PORT` value for subsequent Compose commands. Open http://localhost:8501 to view and manage the eight entity types. The UI has no authentication and is intended for local use with synthetic data; the port binds to localhost. The database enforces constraints, and deleting a referenced record may fail. Administration commands run in short-lived containers; the application does not apply migrations automatically. The AI module and any later API run in this same application service.
+The platform container connects to PostgreSQL at `db:5432` on the Compose network. If host port 5432 is occupied, export `POSTGRES_PORT=55433` before running the Compose commands. The host connection URL must then use port 55433; the container connection remains on port 5432. Keep the same `POSTGRES_PORT` value for subsequent Compose commands. Open http://localhost:8501 to view and manage the eight entity types. The UI has no authentication and is intended for local use with synthetic data; the port binds to localhost. Select **PDF upload** in the sidebar, choose an existing claim or policy document, and upload a PDF to validate and save it. The original PDF is retained in the Compose `pdf_data` volume; text extraction and a persisted document-to-file association are not available yet. The database enforces constraints, and deleting a referenced record may fail. Administration commands run in short-lived containers; the application does not apply migrations automatically. The AI module and any later API run in this same application service.
 
 ## Extract claim facts with Gemini or OpenAI
 

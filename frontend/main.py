@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import tempfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -12,6 +14,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from app.persistence.db import make_sessions
+from app.services.pdf_input import PdfInputError, PdfInputService
 from app.domain.models import (
     Organization, Vehicle, Policy, PolicyClause, Claim, ClaimDocument,
     PolicyDocument, ClaimAnalysis,
@@ -152,12 +155,51 @@ def edit_form(model, instance, session, form_key):
         st.error(error_message(exc))
 
 
+
+def upload_pdf(sessions, session):
+    st.header("PDF upload")
+    st.caption("Validate an existing document selection and save the PDF. The link and text extraction are not available yet.")
+    source_type = st.selectbox("Document type", ("policy", "claim"), format_func=str.title)
+    model = PolicyDocument if source_type == "policy" else ClaimDocument
+    records = session.scalars(select(model).order_by(model.id)).all()
+    if not records:
+        st.info("Create a document record first using the sidebar.")
+        return
+    choices = {record.id: record_label(record) for record in records}
+    document_id = st.selectbox("Existing document", list(choices), format_func=choices.get)
+    uploaded = st.file_uploader("Choose a PDF", type=["pdf"])
+    if st.button("Validate and save PDF", type="primary", disabled=uploaded is None):
+        try:
+            service = PdfInputService.from_environment(sessions)
+            if uploaded.size > service.max_bytes:
+                raise PdfInputError("file_too_large")
+            with tempfile.TemporaryDirectory(prefix="claim-pdf-") as directory:
+                path = Path(directory) / "upload.pdf"
+                path.write_bytes(uploaded.getvalue())
+                result = service.validate(source_type, document_id, path)
+            st.success("PDF validated and saved. The document link is not recorded yet, and text has not been extracted.")
+            st.write(f"Pages: {result.page_count}")
+            st.code(result.sha256, language=None)
+        except PdfInputError as exc:
+            st.error(f"PDF input error: {exc.code}")
+        except (OSError, ValueError, SQLAlchemyError) as exc:
+            st.error(error_message(exc) if not isinstance(exc, OSError) else "Could not read or save the PDF.")
+
+
 def main():
     st.set_page_config(page_title="Claim Intelligence", page_icon="◈", layout="wide")
     st.title("Claim Intelligence")
     st.caption("Local insurance data workspace")
     st.sidebar.title("Data")
-    choice = st.sidebar.radio("Entity", list(MODELS))
+    choice = st.sidebar.radio("Entity", list(MODELS) + ["PDF upload"])
+    if choice == "PDF upload":
+        try:
+            sessions = get_sessions()
+            with sessions() as session:
+                upload_pdf(sessions, session)
+        except (ValueError, SQLAlchemyError) as exc:
+            st.error(error_message(exc))
+        return
     model = MODELS[choice]
     st.header(choice)
     if notice := st.session_state.pop("notice", None):

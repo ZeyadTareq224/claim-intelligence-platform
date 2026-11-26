@@ -7,6 +7,7 @@ services:
       - "127.0.0.1:${PLATFORM_PORT:-8501}:8501"
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claim}:${POSTGRES_PASSWORD:-claim_local}@db:5432/${POSTGRES_DB:-claims}
+      PDF_STORAGE_DIR: /var/lib/claim-platform/pdfs
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
@@ -16,6 +17,8 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-30}
       OPENAI_MAX_OUTPUT_TOKENS: ${OPENAI_MAX_OUTPUT_TOKENS:-1000}
+    volumes:
+      - pdf_data:/var/lib/claim-platform/pdfs
     depends_on:
       db:
         condition: service_healthy
@@ -36,3 +39,4 @@ services:
       retries: 10
 volumes:
   postgres_data:
+  pdf_data:
