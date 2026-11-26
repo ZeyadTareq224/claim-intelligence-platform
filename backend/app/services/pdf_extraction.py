@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import csv
 import io
+import math
 import re
 import subprocess  # nosec B404: Tesseract runs without a shell.
 from pathlib import Path
@@ -38,7 +39,7 @@ class OcrError(Exception):
 
 class TesseractOcr:
     def __init__(self, language: str = "eng", timeout: float = 60):
-        if not re.fullmatch(r"[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*", language) or timeout <= 0:
+        if not re.fullmatch(r"[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*", language) or not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("invalid OCR language or timeout")
         self.language = language
         self.timeout = timeout

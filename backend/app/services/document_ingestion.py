@@ -1,13 +1,14 @@
 """Connect validated PDFs to page extraction and transactional evidence storage."""
 import hashlib
 import json
+import os
 from pathlib import Path
 from uuid import UUID
 
 import pymupdf
 
 from app.repositories.documents import DocumentRepository
-from app.services.pdf_extraction import PdfExtractor
+from app.services.pdf_extraction import PdfExtractor, TesseractOcr
 from app.services.pdf_input import PdfInputError, PdfInputService
 
 
@@ -19,6 +20,16 @@ class DocumentIngestionService:
         self.inputs = inputs
         self.extractor = extractor
         self.repository = repository
+
+    @classmethod
+    def from_environment(cls, sessions):
+        ocr = TesseractOcr(
+            language=os.environ.get("PDF_OCR_LANGUAGE", "eng"),
+            timeout=float(os.environ.get("PDF_OCR_TIMEOUT_SECONDS", "60")),
+        )
+        extractor = PdfExtractor(ocr=ocr, dpi=int(os.environ.get("PDF_OCR_DPI", "200")),
+                                 max_pixels=int(os.environ.get("PDF_OCR_MAX_PIXELS", "25000000")))
+        return cls(PdfInputService.from_environment(sessions), extractor, DocumentRepository(sessions))
 
     def ingest(self, source_type: str, document_id: UUID, path: Path):
         source = self.inputs.validate(source_type, document_id, path)

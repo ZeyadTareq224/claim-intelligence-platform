@@ -134,3 +134,8 @@ def test_iter_bytes_skips_pages_not_requested():
     pages = list(PdfExtractor(ocr).iter_bytes(data, {1, 3}))
     assert [page.page_number for page in pages] == [1, 3]
     assert ocr.calls == 0
+
+
+def test_ocr_timeout_must_be_finite():
+    with pytest.raises(ValueError):
+        TesseractOcr(timeout=float("nan"))

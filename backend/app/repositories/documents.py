@@ -137,6 +137,33 @@ class DocumentRepository:
             run.finished_at = func.now()
             return run.status
 
+    @staticmethod
+    def _details(run):
+        return {"run_id": str(run.id), "status": run.status, "source_hash": run.source_hash,
+                "source_type": "policy" if run.policy_document_id is not None else "claim",
+                "document_id": str(run.policy_document_id or run.claim_document_id),
+                "policy_document_version": run.policy_document_version,
+                "extractor_version": run.extractor_version, "config": run.config, "page_count": run.page_count,
+                "error_code": run.error_code, "created_at": run.created_at.isoformat(),
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                "pages": [{"page_number": page.page_number, "status": page.status,
+                           "method": page.method, "reason": page.reason, "error": page.error,
+                           "width": page.width, "height": page.height, "rotation": page.rotation,
+                           "preview": " ".join(block.raw_text for block in page.blocks)[:160],
+                           "blocks": [{"index": block.block_index, "method": block.method,
+                                       "bbox": block.bbox, "confidence": block.confidence,
+                                       "preview": block.raw_text[:160]} for block in page.blocks]}
+                          for page in run.pages]}
+
+    def get_run(self, run_id):
+        with self.sessions() as session:
+            run = session.scalar(select(DocumentProcessingRun).where(DocumentProcessingRun.id == run_id)
+                .options(selectinload(DocumentProcessingRun.pages).selectinload(ExtractedPage.blocks)))
+            if run is None:
+                raise PdfInputError("run_not_found")
+            return self._details(run)
+
     def inspect(self, source_type, document_id):
         if source_type not in ("policy", "claim"):
             raise PdfInputError("invalid_source_type")
@@ -149,12 +176,4 @@ class DocumentRepository:
             runs = session.scalars(select(DocumentProcessingRun).where(source_column == document_id)
                 .options(selectinload(DocumentProcessingRun.pages).selectinload(ExtractedPage.blocks))
                 .order_by(DocumentProcessingRun.created_at.desc(), DocumentProcessingRun.id)).all()
-            return [{"run_id": str(run.id), "status": run.status, "source_hash": run.source_hash,
-                     "extractor_version": run.extractor_version, "page_count": run.page_count,
-                     "error_code": run.error_code, "created_at": run.created_at.isoformat(),
-                     "started_at": run.started_at.isoformat() if run.started_at else None,
-                     "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-                     "pages": [{"page_number": page.page_number, "status": page.status,
-                                "method": page.method, "reason": page.reason, "error": page.error,
-                                "preview": " ".join(block.raw_text for block in page.blocks)[:160]}
-                               for page in run.pages]} for run in runs]
+            return [self._details(run) for run in runs]
