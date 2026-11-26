@@ -137,3 +137,13 @@ python -m app.ai.evaluation.review \
 ```
 
 Reviewed support counts apply only to the facts actually reviewed; unreviewed and unclear facts remain separate. The review tool validates the run, dataset, model output, and source excerpts, but the human's semantic judgment and identity are self-attested.
+
+## Validate a PDF for ingestion
+
+The first PDF ingestion slice validates an existing document reference and preserves the PDF; it does **not** extract text or create a processing run yet. From `backend/`, with `DATABASE_URL` set:
+
+```bash
+python -m app.cli validate-pdf --source-type policy --document-id <document-uuid> --file /path/to/document.pdf
+```
+
+Use `--source-type claim` for a claim document. The command checks the record, reads the file as a PDF (regardless of extension), rejects encrypted, malformed, empty and over-limit PDFs, and prints the SHA-256 and page count. It stores the unchanged bytes under their hash in `.document-storage/` relative to the working directory; set `PDF_STORAGE_DIR` to an application-controlled persistent directory to change that location. Defaults are 25 MiB (`PDF_MAX_BYTES`) and 200 pages (`PDF_MAX_PAGES`). Do not use temporary storage if the preserved source must remain available. This local operator command does not provide authentication or authorization.

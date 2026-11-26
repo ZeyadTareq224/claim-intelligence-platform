@@ -106,3 +106,28 @@ def test_invalid_foreign_key(session):
     session.add(Claim(id=uuid4(), organization_id=uuid4(), policy_id=None, claim_number="MISSING", description="Missing organization", status=ClaimStatus.DRAFT))
     with pytest.raises(IntegrityError):
         session.flush()
+
+
+def test_pdf_input_requires_correct_existing_document_type(session, tmp_path):
+    from contextlib import nullcontext
+    import pymupdf
+    from app.domain.models import PolicyDocument
+    from app.services.pdf_input import PdfInputError, PdfInputService
+
+    _, _, policy = setup_policy(session)
+    session.add(policy)
+    session.flush()
+    document = PolicyDocument(policy_id=policy.id, filename="policy.pdf", content_type="application/pdf", storage_key="fixture", document_version=1)
+    session.add(document)
+    session.flush()
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((72, 72), "Policy P-123")
+    path = tmp_path / "policy.pdf"
+    path.write_bytes(pdf.tobytes())
+    pdf.close()
+    service = PdfInputService(lambda: nullcontext(session), tmp_path / "storage")
+    with pytest.raises(PdfInputError, match="document_not_found"):
+        service.validate("claim", document.id, path)
+    result = service.validate("policy", document.id, path)
+    assert result.document_id == document.id and result.page_count == 1
+    assert (service.storage_dir / f"{result.sha256}.pdf").read_bytes() == path.read_bytes()

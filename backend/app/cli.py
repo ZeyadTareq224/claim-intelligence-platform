@@ -1,6 +1,7 @@
 """Command-line entry point for structured claim extraction."""
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.domain.models import AnalysisStatus
 from app.persistence.db import make_sessions
 from app.repositories.claims import ClaimNotFound, ClaimRepository
 from app.services.claim_service import ClaimExtractionService
+from app.services.pdf_input import PdfInputError, PdfInputService
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,8 +24,21 @@ def main(argv: list[str] | None = None) -> int:
     source = extract.add_mutually_exclusive_group(required=True)
     source.add_argument("--claim-id", type=UUID)
     source.add_argument("--text-file", type=Path)
+    validate = commands.add_parser("validate-pdf", help="validate and preserve a PDF before ingestion")
+    validate.add_argument("--source-type", choices=("policy", "claim"), required=True)
+    validate.add_argument("--document-id", type=UUID, required=True)
+    validate.add_argument("--file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == "validate-pdf":
+            storage = Path(os.environ.get("PDF_STORAGE_DIR", ".document-storage"))
+            max_bytes = int(os.environ.get("PDF_MAX_BYTES", str(25 * 1024 * 1024)))
+            max_pages = int(os.environ.get("PDF_MAX_PAGES", "200"))
+            result = PdfInputService(make_sessions(), storage, max_bytes, max_pages).validate(
+                args.source_type, args.document_id, args.file)
+            print(json.dumps({"source_type": result.source_type, "document_id": str(result.document_id),
+                              "sha256": result.sha256, "page_count": result.page_count}))
+            return 0
         provider = make_provider()
         if args.claim_id is not None:
             repository = ClaimRepository(make_sessions())
@@ -48,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
             "output_tokens": result.output_tokens, "latency_ms": result.latency_ms,
         }, ensure_ascii=False, indent=2))
         return 0
+    except PdfInputError as exc:
+        print(f"PDF input error: {exc.code}", file=sys.stderr)
     except ProviderError as exc:
         print(f"Extraction failed: {exc.code}", file=sys.stderr)
     except (ValueError, ClaimNotFound) as exc:
@@ -55,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, UnicodeError):
         print("Input error: could not read the text file as UTF-8", file=sys.stderr)
     except SQLAlchemyError:
-        print("Database error: could not read the claim or save its analysis", file=sys.stderr)
+        print("Database error: could not complete the requested operation", file=sys.stderr)
     return 1
 
 
