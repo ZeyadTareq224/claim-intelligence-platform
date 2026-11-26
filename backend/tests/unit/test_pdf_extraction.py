@@ -124,3 +124,13 @@ def test_ocr_coordinates_use_unrotated_page_space():
     assert 0 <= x0 < x1 <= page.cropbox.width
     assert 0 <= y0 < y1 <= page.cropbox.height
     doc.close()
+
+
+def test_iter_bytes_skips_pages_not_requested():
+    doc = make_document()
+    data = doc.tobytes()
+    doc.close()
+    ocr = FakeOcr()
+    pages = list(PdfExtractor(ocr).iter_bytes(data, {1, 3}))
+    assert [page.page_number for page in pages] == [1, 3]
+    assert ocr.calls == 0

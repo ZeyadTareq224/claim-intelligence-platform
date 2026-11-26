@@ -93,9 +93,11 @@ class PdfExtractor:
     def extract_bytes(self, data: bytes) -> list[PageResult]:
         return list(self.iter_bytes(data))
 
-    def iter_bytes(self, data: bytes):
+    def iter_bytes(self, data: bytes, page_numbers: set[int] | None = None):
         with pymupdf.open(stream=data, filetype="pdf") as pdf:
             for index in range(pdf.page_count):
+                if page_numbers is not None and index + 1 not in page_numbers:
+                    continue
                 try:
                     page = pdf.load_page(index)
                 except (RuntimeError, ValueError):
