@@ -7,7 +7,7 @@ import stat
 import tempfile
 from uuid import UUID
 
-import pymupdf
+from app.services.pdf_extraction import PdfExtractor
 
 from app.domain.models import ClaimDocument, PolicyDocument
 
@@ -28,13 +28,15 @@ class ValidatedPdf:
 
 
 class PdfInputService:
-    def __init__(self, sessions, storage_dir: Path, max_bytes: int = 25 * 1024 * 1024, max_pages: int = 200):
+    def __init__(self, sessions, storage_dir: Path, max_bytes: int = 25 * 1024 * 1024, max_pages: int = 200,
+                 native_timeout: float = 30):
         if max_bytes <= 0 or max_pages <= 0:
             raise ValueError("PDF limits must be positive")
         self.sessions = sessions
         self.storage_dir = storage_dir
         self.max_bytes = max_bytes
         self.max_pages = max_pages
+        self.inspector = PdfExtractor(native_timeout=native_timeout)
 
     @classmethod
     def from_environment(cls, sessions):
@@ -43,6 +45,7 @@ class PdfInputService:
             Path(os.environ.get("PDF_STORAGE_DIR", ".document-storage")),
             int(os.environ.get("PDF_MAX_BYTES", str(25 * 1024 * 1024))),
             int(os.environ.get("PDF_MAX_PAGES", "200")),
+            float(os.environ.get("PDF_NATIVE_TIMEOUT_SECONDS", "30")),
         )
 
     def validate(self, source_type: str, document_id: UUID, path: Path) -> ValidatedPdf:
@@ -69,21 +72,12 @@ class PdfInputService:
             raise PdfInputError("file_too_large")
         if not data.startswith(b"%PDF-"):
             raise PdfInputError("invalid_pdf")
-        try:
-            with pymupdf.open(stream=data, filetype="pdf") as pdf:
-                if pdf.needs_pass or pdf.is_encrypted or pdf.metadata.get("encryption"):
-                    raise PdfInputError("encrypted_pdf")
-                if pdf.is_repaired or pdf.page_count == 0:
-                    raise PdfInputError("invalid_pdf")
-                if pdf.page_count > self.max_pages:
-                    raise PdfInputError("page_limit_exceeded")
-                count = pdf.page_count
-                for page in pdf:
-                    _ = page.rect
-        except PdfInputError:
-            raise
-        except (RuntimeError, ValueError) as exc:
-            raise PdfInputError("invalid_pdf") from exc
+        inspection = self.inspector.inspect_bytes(data)
+        if "error" in inspection:
+            raise PdfInputError(inspection["error"])
+        count = inspection["page_count"]
+        if count > self.max_pages:
+            raise PdfInputError("page_limit_exceeded")
 
         digest = hashlib.sha256(data).hexdigest()
         self._preserve(data, digest)

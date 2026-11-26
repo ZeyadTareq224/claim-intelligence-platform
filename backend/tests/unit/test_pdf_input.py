@@ -141,3 +141,25 @@ def test_cli_valid_pdf_reports_hash_and_page_count(tmp_path, monkeypatch, capsys
     payload = json.loads(capsys.readouterr().out)
     assert payload["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
     assert payload["page_count"] == 1
+
+
+def test_pdf_validation_timeout_stops_inspector_before_storage(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    svc, document_id, _ = service(tmp_path, native_timeout=1)
+    path = tmp_path / "input.pdf"
+    path.write_bytes(pdf_bytes())
+    processes = []
+
+    def stalled(*args):
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(svc.inspector, "_start_worker", stalled)
+    with pytest.raises(PdfInputError, match="native_timeout"):
+        svc.validate("policy", document_id, path)
+    assert processes[0].poll() is not None
+    assert not svc.storage_dir.exists()

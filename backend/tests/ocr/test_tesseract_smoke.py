@@ -12,7 +12,7 @@ def test_real_tesseract_recognizes_scanned_page():
     pdf = pymupdf.open()
     scan = pdf.new_page(width=500, height=160)
     scan.insert_image(scan.rect, stream=image)
-    result = PdfExtractor().extract_page(scan)
+    result = PdfExtractor().extract_bytes(pdf.tobytes())[0]
     assert result.status == "completed", result.error
     assert result.method == "ocr"
     assert "ABC123" in " ".join(block.text for block in result.blocks)

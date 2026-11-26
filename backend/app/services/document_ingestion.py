@@ -12,7 +12,7 @@ from app.services.pdf_extraction import PdfExtractor, TesseractOcr
 from app.services.pdf_input import PdfInputError, PdfInputService
 
 
-EXTRACTOR_VERSION = "1"
+EXTRACTOR_VERSION = "2"
 
 
 class DocumentIngestionService:
@@ -28,7 +28,8 @@ class DocumentIngestionService:
             timeout=float(os.environ.get("PDF_OCR_TIMEOUT_SECONDS", "60")),
         )
         extractor = PdfExtractor(ocr=ocr, dpi=int(os.environ.get("PDF_OCR_DPI", "200")),
-                                 max_pixels=int(os.environ.get("PDF_OCR_MAX_PIXELS", "25000000")))
+                                 max_pixels=int(os.environ.get("PDF_OCR_MAX_PIXELS", "25000000")),
+                                 native_timeout=float(os.environ.get("PDF_NATIVE_TIMEOUT_SECONDS", "30")))
         return cls(PdfInputService.from_environment(sessions), extractor, DocumentRepository(sessions))
 
     def ingest(self, source_type: str, document_id: UUID, path: Path):
@@ -48,6 +49,7 @@ class DocumentIngestionService:
             "ocr_timeout": self.extractor.ocr.timeout,
             "ocr_dpi": self.extractor.dpi,
             "max_ocr_pixels": self.extractor.max_pixels,
+            "native_timeout": self.extractor.native_timeout,
         }
         encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
         config_hash = hashlib.sha256(encoded).hexdigest()

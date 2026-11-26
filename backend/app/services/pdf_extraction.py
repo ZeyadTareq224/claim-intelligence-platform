@@ -1,10 +1,16 @@
 """Page-oriented PDF extraction; persistence and input validation are separate."""
 from dataclasses import dataclass, field
+import json
+import os
+import select
+import sys
+import tempfile
+import time
 import csv
 import io
 import math
 import re
-import subprocess  # nosec B404: Tesseract runs without a shell.
+import subprocess  # nosec
 from pathlib import Path
 
 import pymupdf
@@ -46,7 +52,8 @@ class TesseractOcr:
 
     def recognize(self, image: bytes) -> list[tuple[str, tuple[int, int, int, int], float]]:
         try:
-            result = subprocess.run(  # nosec B603,B607: Fixed executable, validated language, no shell.
+            # The executable is fixed, language is validated, and no shell is used.
+            result = subprocess.run(  # nosec
                 ["tesseract", "stdin", "stdout", "-l", self.language, "tsv"],
                 input=image, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=self.timeout, check=True,
@@ -80,33 +87,122 @@ def usable_text(text: str) -> bool:
 
 
 class PdfExtractor:
-    def __init__(self, ocr: TesseractOcr | None = None, dpi: int = 200, max_pixels: int = 25_000_000):
+    def __init__(self, ocr: TesseractOcr | None = None, dpi: int = 200, max_pixels: int = 25_000_000,
+                 native_timeout: float = 30):
         if not 72 <= dpi <= 300 or max_pixels <= 0:
             raise ValueError("invalid OCR resolution or pixel limit")
+        if not math.isfinite(native_timeout) or native_timeout <= 0:
+            raise ValueError("invalid native extraction timeout")
         self.ocr = ocr or TesseractOcr()
         self.dpi = dpi
         self.max_pixels = max_pixels
+        self.native_timeout = native_timeout
 
     def extract(self, path: Path) -> list[PageResult]:
-        with pymupdf.open(path) as pdf:
-            return [self.extract_page(page) for page in pdf]
+        return self.extract_bytes(path.read_bytes())
 
     def extract_bytes(self, data: bytes) -> list[PageResult]:
         return list(self.iter_bytes(data))
 
-    def iter_bytes(self, data: bytes, page_numbers: set[int] | None = None):
-        with pymupdf.open(stream=data, filetype="pdf") as pdf:
-            for index in range(pdf.page_count):
-                if page_numbers is not None and index + 1 not in page_numbers:
-                    continue
-                try:
-                    page = pdf.load_page(index)
-                except (RuntimeError, ValueError):
-                    yield PageResult(index + 1, "failed", None, 0, 0, 0, error="page_load_failed")
-                    continue
-                yield self.extract_page(page)
+    def inspect_bytes(self, data: bytes) -> dict:
+        with tempfile.TemporaryDirectory(prefix="pdf-inspect-") as directory:
+            pdf_path = Path(directory) / "source.pdf"
+            pdf_path.write_bytes(data)
+            return self._run_worker(pdf_path, Path(directory) / "ocr.png", 0)
 
-    def extract_page(self, page) -> PageResult:
+    def iter_bytes(self, data: bytes, page_numbers: set[int] | None = None):
+        with tempfile.TemporaryDirectory(prefix="pdf-extract-") as directory:
+            pdf_path = Path(directory) / "source.pdf"
+            image_path = Path(directory) / "ocr.png"
+            pdf_path.write_bytes(data)
+            if page_numbers is None:
+                info = self._run_worker(pdf_path, image_path, 0)
+                if "page_count" not in info:
+                    raise RuntimeError(info.get("error", "page_extraction_failed"))
+                page_numbers = set(range(1, info["page_count"] + 1))
+            for number in sorted(page_numbers):
+                result = self._run_worker(pdf_path, image_path, number)
+                if "page_number" not in result:
+                    yield PageResult(number, "failed", None, 0, 0, 0, error=result.get("error", "native_worker_failed"))
+                else:
+                    blocks = [TextBlock(**{**block, "bbox": tuple(block["bbox"]) if block["bbox"] is not None else None})
+                              for block in result.pop("blocks")]
+                    yield PageResult(**result, blocks=blocks)
+
+    def _start_worker(self, pdf_path: Path, image_path: Path, number: int):
+        # The module and temporary paths are controlled, and no shell is used.
+        return subprocess.Popen(  # nosec
+            [sys.executable, "-m", "app.services.pdf_page_worker", str(pdf_path), str(image_path),
+             str(number), str(self.dpi), str(self.max_pixels)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+
+    def _run_worker(self, pdf_path: Path, image_path: Path, number: int) -> dict:
+        try:
+            worker = self._start_worker(pdf_path, image_path, number)
+        except OSError:
+            return {"error": "native_worker_failed"}
+        deadline = time.monotonic() + self.native_timeout
+        buffer = b""
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([worker.stdout], [], [], remaining)[0]:
+                    return {"error": "native_timeout"}
+                chunk = os.read(worker.stdout.fileno(), 65536)
+                if not chunk:
+                    return {"error": "native_worker_failed"}
+                buffer += chunk
+                if len(buffer) > 32 * 1024 * 1024:
+                    return {"error": "native_output_too_large"}
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    message = json.loads(line)
+                    if message["event"] == "ocr":
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return {"error": "native_timeout"}
+                        try:
+                            with image_path.open("rb") as image:
+                                payload = image.read(self.max_pixels * 4 + 1)
+                            if len(payload) > self.max_pixels * 4:
+                                raise OcrError("ocr_image_too_large")
+                            reply = {"words": self.ocr.recognize(payload)}
+                        except OcrError as exc:
+                            reply = {"error": exc.code}
+                        except OSError:
+                            reply = {"error": "ocr_failed"}
+                        deadline = time.monotonic() + remaining
+                        response = (json.dumps(reply) + "\n").encode()
+                        if len(response) > 32 * 1024 * 1024:
+                            response = b'{"error":"ocr_output_too_large"}\n'
+                        fd = worker.stdin.fileno()
+                        os.set_blocking(fd, False)
+                        offset = 0
+                        while offset < len(response):
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                                return {"error": "native_timeout"}
+                            offset += os.write(fd, response[offset:offset + 65536])
+                    elif message["event"] == "result":
+                        return message["value"]
+                    else:
+                        return {"error": "native_worker_failed"}
+        except (OSError, ValueError, KeyError, TypeError):
+            return {"error": "native_worker_failed"}
+        finally:
+            if worker.poll() is None:
+                try:
+                    worker.kill()
+                except ProcessLookupError:
+                    pass
+            worker.wait()
+            if worker.stdin:
+                worker.stdin.close()
+            if worker.stdout:
+                worker.stdout.close()
+
+    def _extract_page(self, page) -> PageResult:
         number = page.number + 1
         # PyMuPDF native text coordinates are in unrotated points.
         width, height = page.cropbox.width, page.cropbox.height

@@ -54,7 +54,7 @@ def test_image_region_uses_mixed_and_preserves_native():
     doc = make_document()
     doc[0].insert_image(pymupdf.Rect(50, 150, 350, 250), stream=doc[1].get_pixmap().tobytes("png"))
     ocr = FakeOcr()
-    page = PdfExtractor(ocr).extract_page(doc[0])
+    page = PdfExtractor(ocr)._extract_page(doc[0])
     assert page.method == "mixed" and [block.method for block in page.blocks] == ["native", "ocr"]
     assert ocr.calls == 1
     doc.close()
@@ -64,7 +64,7 @@ def test_ocr_failure_keeps_other_pages_and_native_text():
     doc = make_document()
     doc[0].insert_image(pymupdf.Rect(50, 150, 350, 250), stream=doc[1].get_pixmap().tobytes("png"))
     extractor = PdfExtractor(FakeOcr("ocr_timeout"))
-    first, second, third = [extractor.extract_page(page) for page in doc]
+    first, second, third = [extractor._extract_page(page) for page in doc]
     assert first.status == "failed" and first.error == "ocr_timeout" and first.blocks[0].method == "native"
     assert second.status == "failed" and second.error == "ocr_timeout"
     assert third.status == "blank"
@@ -75,7 +75,7 @@ def test_existing_text_layer_prevents_ocr():
     doc = make_document()
     doc[1].insert_text((40, 60), "Scanned page with existing text layer")
     ocr = FakeOcr()
-    page = PdfExtractor(ocr).extract_page(doc[1])
+    page = PdfExtractor(ocr)._extract_page(doc[1])
     assert page.method == "native" and ocr.calls == 0
     doc.close()
 
@@ -84,7 +84,7 @@ def test_rejects_unusable_text_and_bounds_rendering():
     assert not usable_text("\ufffd\ufffd\ufffd")
     assert usable_text("P-123")
     doc = make_document()
-    result = PdfExtractor(FakeOcr(), max_pixels=1).extract_page(doc[1])
+    result = PdfExtractor(FakeOcr(), max_pixels=1)._extract_page(doc[1])
     assert result.error == "ocr_image_too_large"
     doc.close()
 
@@ -108,7 +108,7 @@ def test_blank_scanned_page_is_classified_without_ocr():
     page = document.new_page(width=200, height=200)
     page.insert_image(page.rect, stream=image)
     ocr = FakeOcr()
-    result = PdfExtractor(ocr).extract_page(page)
+    result = PdfExtractor(ocr)._extract_page(page)
     assert result.status == "blank" and ocr.calls == 0
     document.close()
     source.close()
@@ -118,7 +118,7 @@ def test_ocr_coordinates_use_unrotated_page_space():
     doc = make_document()
     page = doc[1]
     page.set_rotation(90)
-    result = PdfExtractor(FakeOcr()).extract_page(page)
+    result = PdfExtractor(FakeOcr())._extract_page(page)
     assert result.status == "completed"
     x0, y0, x1, y1 = result.blocks[0].bbox
     assert 0 <= x0 < x1 <= page.cropbox.width
@@ -139,3 +139,138 @@ def test_iter_bytes_skips_pages_not_requested():
 def test_ocr_timeout_must_be_finite():
     with pytest.raises(ValueError):
         TesseractOcr(timeout=float("nan"))
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf")])
+def test_native_timeout_must_be_positive_and_finite(value):
+    with pytest.raises(ValueError, match="native extraction timeout"):
+        PdfExtractor(native_timeout=value)
+
+
+def test_native_timeout_stops_worker_and_later_page_succeeds(monkeypatch):
+    import sys
+    import time
+
+    doc = make_document()
+    data = doc.tobytes()
+    doc.close()
+    extractor = PdfExtractor(FakeOcr(), native_timeout=1.5)
+    start_worker = extractor._start_worker
+    stopped = []
+
+    def worker(pdf_path, image_path, number):
+        if number == 1:
+            process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            stopped.append(process)
+            return process
+        return start_worker(pdf_path, image_path, number)
+
+    monkeypatch.setattr(extractor, "_start_worker", worker)
+    start = time.monotonic()
+    pages = list(extractor.iter_bytes(data, {1, 3}))
+    assert time.monotonic() - start < 5
+    assert pages[0].status == "failed" and pages[0].error == "native_timeout"
+    assert pages[1].status == "blank"
+    assert stopped[0].poll() is not None
+
+
+def test_ocr_time_does_not_count_against_native_limit():
+    import time
+
+    class SlowOcr(FakeOcr):
+        def recognize(self, image):
+            time.sleep(1.2)
+            return super().recognize(image)
+
+    doc = make_document()
+    data = doc.tobytes()
+    doc.close()
+    page = list(PdfExtractor(SlowOcr(), native_timeout=1).iter_bytes(data, {2}))[0]
+    assert page.status == "completed" and page.method == "ocr"
+
+
+def test_ingestion_reads_native_timeout_from_environment(monkeypatch):
+    from app.services.document_ingestion import DocumentIngestionService
+
+    monkeypatch.setenv("PDF_NATIVE_TIMEOUT_SECONDS", "4.5")
+    service = DocumentIngestionService.from_environment(None)
+    assert service.extractor.native_timeout == 4.5
+    assert service.inputs.inspector.native_timeout == 4.5
+
+
+def test_native_timeout_also_bounds_writing_ocr_reply(monkeypatch):
+    import sys
+    import time
+
+    class LargeOcr:
+        def recognize(self, image):
+            return [("A" * 200, (1, 1, 2, 2), 90)] * 10000
+
+    doc = make_document()
+    data = doc.tobytes()
+    doc.close()
+    extractor = PdfExtractor(LargeOcr(), native_timeout=1.5)
+    processes = []
+
+    def stalled(pdf_path, image_path, number):
+        code = (
+            "from pathlib import Path; import sys, time; "
+            "Path(sys.argv[1]).write_bytes(b'png'); "
+            "print('{\\\"event\\\":\\\"ocr\\\"}', flush=True); time.sleep(10)"
+        )
+        process = subprocess.Popen([sys.executable, "-c", code, str(image_path)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(extractor, "_start_worker", stalled)
+    started = time.monotonic()
+    page = list(extractor.iter_bytes(data, {1}))[0]
+    assert time.monotonic() - started < 5
+    assert page.error == "native_timeout" and processes[0].poll() is not None
+
+
+@pytest.mark.skipif(not __import__("sys").platform.startswith("linux"), reason="Linux parent-death signal")
+def test_page_worker_exits_when_parent_is_killed(tmp_path):
+    import os
+    import select
+    import sys
+    import time
+
+    doc = make_document()
+    path = tmp_path / "test.pdf"
+    path.write_bytes(doc.tobytes())
+    doc.close()
+    image_path = tmp_path / "ocr.png"
+    code = (
+        "from pathlib import Path; import sys, time; "
+        "from app.services.pdf_extraction import PdfExtractor; "
+        "p=PdfExtractor()._start_worker(Path(sys.argv[1]), Path(sys.argv[2]), 2); "
+        "assert b'\"event\": \"ocr\"' in p.stdout.readline(); print(p.pid, flush=True); time.sleep(20)"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", code, str(path), str(image_path)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert select.select([parent.stdout], [], [], 5)[0], "worker did not request OCR"
+        child_pid = int(parent.stdout.readline().strip())
+        parent.kill()
+        parent.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                state = __import__("pathlib").Path(f"/proc/{child_pid}/stat").read_text(encoding="utf-8").split()[2]
+            except FileNotFoundError:
+                break
+            if state == "Z":
+                break
+            time.sleep(0.05)
+        else:
+            os.kill(child_pid, 9)
+            pytest.fail("worker survived its parent")
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait()
+        parent.stdout.close()
+        parent.stderr.close()

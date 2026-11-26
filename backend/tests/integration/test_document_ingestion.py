@@ -539,3 +539,51 @@ def test_cli_rejects_invalid_pdf_without_a_run(sessions, tmp_path, monkeypatch, 
     assert "invalid_pdf" in capsys.readouterr().err
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(DocumentProcessingRun).where(DocumentProcessingRun.claim_document_id == document_id)) == 0
+
+
+def test_native_timeout_marks_only_its_page_and_keeps_other_pages(sessions, tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "three-pages.pdf"
+    pdf = pymupdf.open()
+    pdf.new_page().insert_text((72, 72), "First policy page")
+    pdf.new_page().insert_text((72, 72), "Second policy page")
+    pdf.new_page().insert_text((72, 72), "Third policy page")
+    pdf.save(path)
+    pdf.close()
+    service = ingestion(sessions, tmp_path)
+    service.extractor.native_timeout = 2
+    start_worker = service.extractor._start_worker
+
+    def worker(pdf_path, image_path, number):
+        if number == 2:
+            return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return start_worker(pdf_path, image_path, number)
+
+    monkeypatch.setattr(service.extractor, "_start_worker", worker)
+    run_id = service.ingest("policy", document_id, path)
+    with sessions() as session:
+        run = session.get(DocumentProcessingRun, run_id)
+        assert run.status == "partial" and run.config["native_timeout"] == 2
+        assert [page.status for page in run.pages] == ["completed", "failed", "completed"]
+        assert run.pages[1].error == "native_timeout"
+        assert "First" in run.pages[0].blocks[0].raw_text
+        assert "Third" in run.pages[2].blocks[0].raw_text
+
+
+def test_changing_native_timeout_creates_distinct_run(sessions, tmp_path):
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    first = service.ingest("claim", document_id, path)
+    service.extractor.native_timeout = 35
+    second = service.ingest("claim", document_id, path)
+    with sessions() as session:
+        first_run, second_run = session.get(DocumentProcessingRun, first), session.get(DocumentProcessingRun, second)
+        assert first != second and first_run.source_hash == second_run.source_hash
+        assert first_run.config_hash != second_run.config_hash
+        assert first_run.config["native_timeout"] == 30 and second_run.config["native_timeout"] == 35
