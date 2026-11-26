@@ -505,3 +505,37 @@ def test_failed_replacement_rolls_back_to_previous_page(sessions, tmp_path):
     result = service.repository.inspect("claim", document_id)[0]
     assert result["run_id"] == str(run_id) and result["error_code"] == "persistence_failed"
     assert result["pages"][0]["preview"] == "keep old"
+
+
+def test_cli_returns_nonzero_for_partial_result(sessions, tmp_path, monkeypatch, capsys):
+    import json
+    from app import cli
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved", "native")]),
+        PageResult(2, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
+    ])
+    monkeypatch.setattr(cli, "make_sessions", lambda: sessions)
+    monkeypatch.setattr(cli.DocumentIngestionService, "from_environment", lambda _: service)
+    assert cli.main(["ingest-pdf", "--source-type", "claim", "--document-id", str(document_id), "--file", str(path)]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "partial" and result["pages"][1]["error"] == "ocr_timeout"
+
+
+def test_cli_rejects_invalid_pdf_without_a_run(sessions, tmp_path, monkeypatch, capsys):
+    from app import cli
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "invalid.pdf"
+    path.write_bytes(b"not a PDF")
+    monkeypatch.setattr(cli, "make_sessions", lambda: sessions)
+    monkeypatch.setenv("PDF_STORAGE_DIR", str(tmp_path / "storage"))
+    assert cli.main(["ingest-pdf", "--source-type", "claim", "--document-id", str(document_id), "--file", str(path)]) == 1
+    assert "invalid_pdf" in capsys.readouterr().err
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun).where(DocumentProcessingRun.claim_document_id == document_id)) == 0

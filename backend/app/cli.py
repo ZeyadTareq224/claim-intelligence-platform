@@ -14,6 +14,7 @@ from app.persistence.db import make_sessions
 from app.repositories.claims import ClaimNotFound, ClaimRepository
 from app.repositories.documents import DocumentRepository
 from app.services.claim_service import ClaimExtractionService
+from app.services.document_ingestion import DocumentIngestionService
 from app.services.pdf_input import PdfInputError, PdfInputService
 
 
@@ -28,6 +29,10 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--source-type", choices=("policy", "claim"), required=True)
     validate.add_argument("--document-id", type=UUID, required=True)
     validate.add_argument("--file", type=Path, required=True)
+    ingest = commands.add_parser("ingest-pdf", help="extract and store a PDF for an existing document")
+    ingest.add_argument("--source-type", choices=("policy", "claim"), required=True)
+    ingest.add_argument("--document-id", type=UUID, required=True)
+    ingest.add_argument("--file", type=Path, required=True)
     inspect = commands.add_parser("inspect-document", help="inspect document processing runs")
     inspect.add_argument("--source-type", choices=("policy", "claim"), required=True)
     inspect.add_argument("--document-id", type=UUID, required=True)
@@ -39,6 +44,13 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"source_type": result.source_type, "document_id": str(result.document_id),
                               "sha256": result.sha256, "page_count": result.page_count}))
             return 0
+        if args.command == "ingest-pdf":
+            sessions = make_sessions()
+            run_id = DocumentIngestionService.from_environment(sessions).ingest(
+                args.source_type, args.document_id, args.file)
+            result = DocumentRepository(sessions).get_run(run_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "completed" else 1
         if args.command == "inspect-document":
             runs = DocumentRepository(make_sessions()).inspect(args.source_type, args.document_id)
             print(json.dumps({"source_type": args.source_type, "document_id": str(args.document_id),
@@ -76,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Input or configuration error: {exc}", file=sys.stderr)
     except (OSError, UnicodeError):
         print("Input error: could not read the text file as UTF-8", file=sys.stderr)
+    except RuntimeError:
+        print("PDF processing failed; use inspect-document for saved status", file=sys.stderr)
     except SQLAlchemyError:
         print("Database error: could not complete the requested operation", file=sys.stderr)
     return 1
