@@ -56,7 +56,7 @@ docker compose run --rm platform python -m fixtures.seed
 docker compose up -d platform
 ```
 
-The platform container connects to PostgreSQL at `db:5432` on the Compose network. If host port 5432 is occupied, export `POSTGRES_PORT=55433` before running the Compose commands. The host connection URL must then use port 55433; the container connection remains on port 5432. Keep the same `POSTGRES_PORT` value for subsequent Compose commands. Open http://localhost:8501 to view and manage the eight entity types. The UI has no authentication and is intended for local use with synthetic data; the port binds to localhost. Select **PDF upload** in the sidebar, choose an existing claim or policy document, and upload a PDF to validate and save it. The original PDF is retained in the Compose `pdf_data` volume; text extraction and a persisted document-to-file association are not available yet. The database enforces constraints, and deleting a referenced record may fail. Administration commands run in short-lived containers; the application does not apply migrations automatically. The AI module and any later API run in this same application service.
+The platform container connects to PostgreSQL at `db:5432` on the Compose network. If host port 5432 is occupied, export `POSTGRES_PORT=55433` before running the Compose commands. The host connection URL must then use port 55433; the container connection remains on port 5432. Keep the same `POSTGRES_PORT` value for subsequent Compose commands. Open http://localhost:8501 to view and manage the eight entity types. The UI has no authentication and is intended for local use with synthetic data; the port binds to localhost. Select **PDF upload** in the sidebar, choose an existing claim or policy document, and upload a PDF to extract and save its pages. The original PDF is retained in the Compose `pdf_data` volume. Run history shows status, errors, text previews and block coordinates. The database enforces constraints, and deleting a referenced record may fail. Administration commands run in short-lived containers; the application does not apply migrations automatically. The AI module and any later API run in this same application service.
 
 ## Extract claim facts with Gemini or OpenAI
 
@@ -140,7 +140,7 @@ Reviewed support counts apply only to the facts actually reviewed; unreviewed an
 
 ## Validate a PDF for ingestion
 
-The first PDF ingestion slice validates an existing document reference and preserves the PDF; it does **not** extract text or create a processing run yet. From `backend/`, with `DATABASE_URL` set:
+The `validate-pdf` command checks and preserves a PDF without extracting text or creating a processing run. From `backend/`, with `DATABASE_URL` set:
 
 ```bash
 python -m app.cli validate-pdf --source-type policy --document-id <document-uuid> --file /path/to/document.pdf
@@ -150,11 +150,11 @@ Use `--source-type claim` for a claim document. The command checks the record, r
 
 ## PDF page extraction service
 
-`app.services.pdf_extraction.PdfExtractor` returns page results with ordered native or OCR text blocks, method, bounding boxes and page-level errors. Construct it with `TesseractOcr(language="eng", timeout=60)` and `PdfExtractor(dpi=200)` to change OCR language, timeout or resolution. The Docker image installs Tesseract and English data; local installations need the `tesseract` executable and the requested language data. OCR images are capped at 25 million pixels by default. Arabic is configurable if its language data is installed, but has not been evaluated.
+`app.services.pdf_extraction.PdfExtractor` returns page results with ordered native or OCR text blocks, method, bounding boxes and page-level errors. CLI and frontend OCR settings are `PDF_OCR_LANGUAGE` (default `eng`), `PDF_OCR_DPI` (200), `PDF_OCR_TIMEOUT_SECONDS` (60), and `PDF_OCR_MAX_PIXELS` (25000000). The Docker image installs Tesseract and English data; local installations need the `tesseract` executable and the requested language data. Arabic is configurable if its language data is installed, but has not been evaluated.
 
-The extractor can process a validated file, but is not yet connected to the CLI or upload screen. Text usability and image-region detection are heuristics; complex layouts, image-only blank pages, overlapping image and text layers, and reading order can be misclassified. A failed OCR region retains any native blocks but marks the page failed. Bounding boxes use unrotated page coordinates in PDF points. Native extraction currently has no enforced timeout; OCR has a timeout.
+Text usability and image-region detection are heuristics; complex layouts, image-only blank pages, overlapping image and text layers, and reading order can be misclassified. A failed OCR region retains any native blocks but marks the page failed. Bounding boxes use unrotated page coordinates in PDF points. Native extraction currently has no enforced timeout; OCR has a timeout.
 
-Run the real OCR smoke test with Tesseract and English language data installed:
+Run the real OCR smoke tests with Tesseract and English language data installed and `TEST_DATABASE_URL` set to a separate migrated PostgreSQL database:
 
 ```bash
 cd backend
@@ -163,7 +163,14 @@ pytest -q tests/ocr
 
 ## Store extracted document evidence
 
-Apply the latest Alembic migration, then `DocumentIngestionService` can validate a PDF, extract the preserved bytes, and store a processing run with its document reference, source hash, configuration, pages, and ordered blocks in PostgreSQL. Policy document versions are recorded at processing time. Raw block text remains separate from normalized text. The extractor service is available to Python callers; the existing CLI and upload screen do not invoke it yet.
+Apply the latest Alembic migration, then `DocumentIngestionService` can validate a PDF, extract the preserved bytes, and store a processing run with its document reference, source hash, configuration, pages, and ordered blocks in PostgreSQL. Policy document versions are recorded at processing time. Raw block text remains separate from normalized text. From `backend/`, with `DATABASE_URL` set, process a PDF and inspect its runs:
+
+```bash
+python -m app.cli ingest-pdf --source-type policy --document-id <document-uuid> --file /path/to/document.pdf
+python -m app.cli inspect-document --source-type policy --document-id <document-uuid>
+```
+
+Use `--source-type claim` for a claim document. Ingestion returns a nonzero exit code for partial or failed runs. Output includes short text previews and coordinates. The frontend's **PDF upload** screen invokes the same service.
 
 The database identifies a run by document version, source hash and extraction configuration. Repeating a completed run returns its existing ID. Repeating a partial, failed, pending or interrupted run retries only failed or unfinished pages; completed and blank pages are retained. Changed source bytes or extractor configuration produce a separate run. Each page is saved in its own transaction, and processing status reflects the saved output and errors.
 

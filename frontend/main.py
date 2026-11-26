@@ -14,7 +14,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from app.persistence.db import make_sessions
-from app.services.pdf_input import PdfInputError, PdfInputService
+from app.services.pdf_input import PdfInputError
+from app.services.document_ingestion import DocumentIngestionService
+from app.repositories.documents import DocumentRepository
 from app.domain.models import (
     Organization, Vehicle, Policy, PolicyClause, Claim, ClaimDocument,
     PolicyDocument, ClaimAnalysis,
@@ -158,7 +160,7 @@ def edit_form(model, instance, session, form_key):
 
 def upload_pdf(sessions, session):
     st.header("PDF upload")
-    st.caption("Validate an existing document selection and save the PDF. The link and text extraction are not available yet.")
+    st.caption("Process a PDF for an existing policy or claim document.")
     source_type = st.selectbox("Document type", ("policy", "claim"), format_func=str.title)
     model = PolicyDocument if source_type == "policy" else ClaimDocument
     records = session.scalars(select(model).order_by(model.id)).all()
@@ -168,22 +170,48 @@ def upload_pdf(sessions, session):
     choices = {record.id: record_label(record) for record in records}
     document_id = st.selectbox("Existing document", list(choices), format_func=choices.get)
     uploaded = st.file_uploader("Choose a PDF", type=["pdf"])
-    if st.button("Validate and save PDF", type="primary", disabled=uploaded is None):
+    repository = DocumentRepository(sessions)
+    if st.button("Process PDF", type="primary", disabled=uploaded is None):
         try:
-            service = PdfInputService.from_environment(sessions)
-            if uploaded.size > service.max_bytes:
+            service = DocumentIngestionService.from_environment(sessions)
+            if uploaded.size > service.inputs.max_bytes:
                 raise PdfInputError("file_too_large")
             with tempfile.TemporaryDirectory(prefix="claim-pdf-") as directory:
                 path = Path(directory) / "upload.pdf"
                 path.write_bytes(uploaded.getvalue())
-                result = service.validate(source_type, document_id, path)
-            st.success("PDF validated and saved. The document link is not recorded yet, and text has not been extracted.")
-            st.write(f"Pages: {result.page_count}")
-            st.code(result.sha256, language=None)
+                run_id = service.ingest(source_type, document_id, path)
+            result = repository.get_run(run_id)
+            if result["status"] == "completed":
+                st.success(f"PDF processed. Run: {run_id}")
+            elif result["status"] == "partial":
+                st.warning(f"PDF partially processed. Run: {run_id}. Check the page errors below.")
+            else:
+                st.error(f"PDF processing failed. Run: {run_id}. Check the errors below.")
         except PdfInputError as exc:
             st.error(f"PDF input error: {exc.code}")
-        except (OSError, ValueError, SQLAlchemyError) as exc:
-            st.error(error_message(exc) if not isinstance(exc, OSError) else "Could not read or save the PDF.")
+        except (OSError, RuntimeError, ValueError, SQLAlchemyError):
+            st.error("PDF processing failed. Check the run history below and the database connection.")
+
+    runs = repository.inspect(source_type, document_id)
+    if not runs:
+        st.info("No processing runs for this document yet.")
+    for run in runs:
+        with st.expander(f"Run {run['run_id']} · {run['status']}"):
+            st.write(f"Source SHA-256: {run['source_hash']}")
+            st.write(f"Pages: {len(run['pages'])} / {run['page_count']} · Extractor: {run['extractor_version']}")
+            if run["error_code"]:
+                st.error(f"Run error: {run['error_code']}")
+            for page in run["pages"]:
+                st.write(f"Page {page['page_number']} · {page['status']} · {page['method'] or 'none'}")
+                if page["reason"]:
+                    st.caption(f"Extraction reason: {page['reason']}")
+                if page["error"]:
+                    st.error(f"Page error: {page['error']}")
+                if page["preview"]:
+                    st.text(page["preview"])
+                if page["blocks"]:
+                    st.caption(f"Page size: {page['width']} × {page['height']} points · Rotation: {page['rotation']}°")
+                    st.dataframe(page["blocks"], hide_index=True, width="stretch")
 
 
 def main():

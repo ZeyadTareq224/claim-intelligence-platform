@@ -8,6 +8,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claim}:${POSTGRES_PASSWORD:-claim_local}@db:5432/${POSTGRES_DB:-claims}
       PDF_STORAGE_DIR: /var/lib/claim-platform/pdfs
+      PDF_OCR_LANGUAGE: ${PDF_OCR_LANGUAGE:-eng}
+      PDF_OCR_DPI: ${PDF_OCR_DPI:-200}
+      PDF_OCR_TIMEOUT_SECONDS: ${PDF_OCR_TIMEOUT_SECONDS:-60}
+      PDF_OCR_MAX_PIXELS: ${PDF_OCR_MAX_PIXELS:-25000000}
       AI_PROVIDER: ${AI_PROVIDER:-openai}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
