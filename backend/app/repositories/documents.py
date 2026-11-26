@@ -1,16 +1,74 @@
 """Transactional storage for extracted document evidence."""
+from contextlib import contextmanager
+import hashlib
+import json
+
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, sessionmaker
 
 from app.domain.models import ClaimDocument, PolicyDocument, DocumentProcessingRun, ExtractedPage, ExtractedBlock
 from app.services.pdf_input import PdfInputError
 
 
 class DocumentRepository:
-    def __init__(self, sessions):
+    def __init__(self, sessions, claim_connection=None):
         self.sessions = sessions
+        self.claim_connection = claim_connection
+
+    def _check_claim(self):
+        if self.claim_connection is not None and self.claim_connection.invalidated:
+            raise PdfInputError("processing_claim_lost")
+
+    @contextmanager
+    def claim(self, source, config_hash):
+        identity = [source.source_type, str(source.document_id), source.policy_document_version,
+                    source.sha256, config_hash]
+        digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).digest()
+        key = int.from_bytes(digest[:8], "big", signed=True)
+        with self.sessions() as session:
+            bind = session.get_bind()
+        engine = bind.engine if hasattr(bind, "engine") else bind
+        with engine.connect() as connection:
+            acquired = None
+            try:
+                acquired = connection.scalar(select(func.pg_try_advisory_lock(key)))
+                connection.commit()
+                if not acquired:
+                    raise PdfInputError("processing_in_progress")
+                yield DocumentRepository(sessionmaker(bind=connection, expire_on_commit=False), connection)
+            finally:
+                if acquired is None:
+                    connection.invalidate()
+                elif acquired and not connection.invalidated:
+                    try:
+                        connection.rollback()
+                        released = connection.scalar(select(func.pg_advisory_unlock(key)))
+                        connection.commit()
+                        if not released:
+                            raise PdfInputError("processing_claim_lost")
+                    except BaseException:
+                        connection.invalidate()
+                        raise
+
+    def find(self, source, config_hash):
+        self._check_claim()
+        source_column = (DocumentProcessingRun.policy_document_id if source.source_type == "policy"
+                         else DocumentProcessingRun.claim_document_id)
+        with self.sessions() as session:
+            statement = select(DocumentProcessingRun).where(
+                source_column == source.document_id,
+                DocumentProcessingRun.source_hash == source.sha256,
+                DocumentProcessingRun.config_hash == config_hash,
+            ).options(selectinload(DocumentProcessingRun.pages))
+            if source.source_type == "policy":
+                statement = statement.where(DocumentProcessingRun.policy_document_version == source.policy_document_version)
+            run = session.scalar(statement)
+            if run is None:
+                return None
+            return run.id, run.status, {page.page_number for page in run.pages if page.status in ("completed", "blank")}
 
     def create(self, source, config, config_hash, version):
+        self._check_claim()
         with self.sessions.begin() as session:
             model = PolicyDocument if source.source_type == "policy" else ClaimDocument
             document = session.get(model, source.document_id, with_for_update=True)
@@ -30,15 +88,28 @@ class DocumentRepository:
             return run.id
 
     def start(self, run_id):
+        self._check_claim()
         with self.sessions.begin() as session:
             result = session.execute(update(DocumentProcessingRun).where(
-                DocumentProcessingRun.id == run_id, DocumentProcessingRun.status == "pending"
-            ).values(status="processing", started_at=func.now()))
+                DocumentProcessingRun.id == run_id, DocumentProcessingRun.status.in_(("pending", "processing", "partial", "failed"))
+            ).values(status="processing", started_at=func.now(), finished_at=None, error_code=None))
             if result.rowcount != 1:
-                raise PdfInputError("run_not_pending")
+                raise PdfInputError("run_not_retryable")
 
     def save_page(self, run_id, page):
+        self._check_claim()
         with self.sessions.begin() as session:
+            existing = session.scalar(select(ExtractedPage).where(
+                ExtractedPage.run_id == run_id, ExtractedPage.page_number == page.page_number
+            ).options(selectinload(ExtractedPage.blocks)))
+            if existing is not None:
+                if existing.status != "failed":
+                    raise PdfInputError("page_already_completed")
+                if existing.blocks and page.status == "failed" and not page.blocks:
+                    existing.error, existing.reason = page.error, page.reason
+                    return
+                session.delete(existing)
+                session.flush()
             session.add(ExtractedPage(
                 run_id=run_id, page_number=page.page_number, status=page.status, method=page.method,
                 reason=page.reason, error=page.error, width=page.width, height=page.height,
@@ -50,6 +121,7 @@ class DocumentRepository:
             ))
 
     def finish(self, run_id, error_code=None):
+        self._check_claim()
         with self.sessions.begin() as session:
             run = session.scalar(select(DocumentProcessingRun).where(DocumentProcessingRun.id == run_id)
                                  .options(selectinload(DocumentProcessingRun.pages).selectinload(ExtractedPage.blocks)))

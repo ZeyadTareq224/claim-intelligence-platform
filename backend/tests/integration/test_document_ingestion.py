@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pymupdf
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -27,16 +27,30 @@ def sessions():
     if url == os.environ.get("DATABASE_URL"):
         pytest.fail("TEST_DATABASE_URL must differ from DATABASE_URL")
     engine = create_engine(url)
-    connection = engine.connect()
-    transaction = connection.begin()
-    yield sessionmaker(bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint")
-    transaction.rollback()
-    connection.close()
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    factory.test_org_ids = []
+    yield factory
+    with factory.begin() as session:
+        org_ids = factory.test_org_ids
+        policy_ids = select(Policy.id).where(Policy.organization_id.in_(org_ids))
+        claim_ids = select(Claim.id).where(Claim.organization_id.in_(org_ids))
+        policy_docs = select(PolicyDocument.id).where(PolicyDocument.policy_id.in_(policy_ids))
+        claim_docs = select(ClaimDocument.id).where(ClaimDocument.claim_id.in_(claim_ids))
+        session.execute(delete(DocumentProcessingRun).where(or_(
+            DocumentProcessingRun.policy_document_id.in_(policy_docs),
+            DocumentProcessingRun.claim_document_id.in_(claim_docs))))
+        session.execute(delete(PolicyDocument).where(PolicyDocument.id.in_(policy_docs)))
+        session.execute(delete(ClaimDocument).where(ClaimDocument.id.in_(claim_docs)))
+        session.execute(delete(Claim).where(Claim.id.in_(claim_ids)))
+        session.execute(delete(Policy).where(Policy.id.in_(policy_ids)))
+        session.execute(delete(Vehicle).where(Vehicle.organization_id.in_(org_ids)))
+        session.execute(delete(Organization).where(Organization.id.in_(org_ids)))
     engine.dispose()
 
 
 def make_source(sessions, source_type, version=1):
     org_id, vehicle_id, policy_id, claim_id, document_id = [uuid4() for _ in range(5)]
+    sessions.test_org_ids.append(org_id)
     with sessions.begin() as session:
         session.add(Organization(id=org_id, name="Document test", code=org_id.hex))
         session.flush()
@@ -102,8 +116,7 @@ def test_constraints_prevent_duplicate_run_and_cross_document_link(sessions, tmp
     service = ingestion(sessions, tmp_path)
     first_run = service.ingest("policy", first, path)
     second_run = service.ingest("claim", second, path)
-    with pytest.raises(IntegrityError):
-        service.ingest("policy", first, path)
+    assert service.ingest("policy", first, path) == first_run
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(DocumentProcessingRun)) == 2
         assert session.get(DocumentProcessingRun, first_run).claim_document_id is None
@@ -130,7 +143,7 @@ def test_page_failure_is_visible_and_successful_blocks_are_saved(sessions, tmp_p
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.iter_bytes = lambda data: [
+    service.extractor.iter_bytes = lambda data, page_numbers=None: [
         PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("  Kept\n  text  ", "native", (1, 2, 3, 4))]),
         PageResult(2, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
     ]
@@ -170,7 +183,7 @@ def test_failed_persistence_keeps_committed_page_records(sessions, tmp_path):
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.iter_bytes = lambda data: [
+    service.extractor.iter_bytes = lambda data, page_numbers=None: [
         PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("valid", "native")]),
         PageResult(2, "completed", "native", 200, 200, 0, [TextBlock("bad", "invalid")]),
     ]
@@ -216,7 +229,7 @@ def test_processing_is_visible_and_pages_survive_interruption(sessions, tmp_path
     service = ingestion(sessions, tmp_path)
     repository = service.repository
 
-    def interrupted(data):
+    def interrupted(data, page_numbers=None):
         runs = repository.inspect("policy", document_id)
         assert runs[0]["status"] == "processing" and runs[0]["pages"] == []
         yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved page", "native")])
@@ -241,7 +254,7 @@ def test_unexpected_extraction_error_marks_partial(sessions, tmp_path):
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
 
-    def broken(data):
+    def broken(data, page_numbers=None):
         yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved", "native")])
         raise RuntimeError("sensitive content should not be saved as an error")
 
@@ -260,7 +273,7 @@ def test_incomplete_extraction_cannot_complete(sessions, tmp_path):
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.iter_bytes = lambda data: [PageResult(1, "blank", None, 200, 200, 0)]
+    service.extractor.iter_bytes = lambda data, page_numbers=None: [PageResult(1, "blank", None, 200, 200, 0)]
     run_id = service.ingest("claim", document_id, path)
     with sessions() as session:
         run = session.get(DocumentProcessingRun, run_id)
@@ -283,16 +296,16 @@ def test_cli_inspects_processing_results(sessions, tmp_path, monkeypatch, capsys
     assert result["runs"][0]["pages"][0]["method"] == "native"
 
 
-def test_pending_run_remains_visible_if_interrupted_before_start(sessions, tmp_path):
+def test_pending_run_remains_visible_if_interrupted_before_start(sessions, tmp_path, monkeypatch):
     document_id = make_source(sessions, "claim")
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
 
-    def interrupt(run_id):
+    def interrupt(self, run_id):
         raise KeyboardInterrupt()
 
-    service.repository.start = interrupt
+    monkeypatch.setattr(DocumentRepository, "start", interrupt)
     with pytest.raises(KeyboardInterrupt):
         service.ingest("claim", document_id, path)
     result = service.repository.inspect("claim", document_id)[0]
@@ -307,10 +320,188 @@ def test_ocr_failure_with_no_usable_text_is_failed(sessions, tmp_path):
     path = tmp_path / "test.pdf"
     make_pdf(path)
     service = ingestion(sessions, tmp_path)
-    service.extractor.iter_bytes = lambda data: [
+    service.extractor.iter_bytes = lambda data, page_numbers=None: [
         PageResult(1, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
         PageResult(2, "blank", None, 200, 200, 0),
     ]
     service.ingest("claim", document_id, path)
     result = service.repository.inspect("claim", document_id)[0]
     assert result["status"] == "failed" and result["pages"][0]["error"] == "ocr_timeout"
+
+
+def test_completed_repeat_returns_same_run_without_extracting(sessions, tmp_path):
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    first = service.ingest("policy", document_id, path)
+
+    def no_extract(*args):
+        pytest.fail("completed pages should not be extracted again")
+
+    service.extractor.iter_bytes = no_extract
+    assert service.ingest("policy", document_id, path) == first
+    with sessions() as session:
+        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun)) == 1
+        assert session.scalar(select(func.count()).select_from(ExtractedPage)) == 2
+
+
+def test_retry_failed_page_preserves_successful_page_and_block(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("first", "native")]),
+        PageResult(2, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
+    ])
+    run_id = service.ingest("policy", document_id, path)
+    with sessions() as session:
+        run = session.get(DocumentProcessingRun, run_id)
+        page_id, block_id = run.pages[0].id, run.pages[0].blocks[0].id
+        assert run.status == "partial"
+
+    def retry(data, page_numbers):
+        assert page_numbers == {2}
+        yield PageResult(2, "completed", "ocr", 200, 200, 0, [TextBlock("recovered", "ocr")])
+
+    service.extractor.iter_bytes = retry
+    assert service.ingest("policy", document_id, path) == run_id
+    with sessions() as session:
+        run = session.get(DocumentProcessingRun, run_id)
+        assert run.status == "completed" and run.error_code is None
+        assert run.pages[0].id == page_id and run.pages[0].blocks[0].id == block_id
+        assert run.pages[1].blocks[0].raw_text == "recovered"
+        assert len(run.pages) == 2
+
+
+def test_retry_after_interruption_keeps_completed_page(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+
+    def interrupted(data, page_numbers):
+        yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved", "native")])
+        raise KeyboardInterrupt()
+
+    service.extractor.iter_bytes = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.ingest("claim", document_id, path)
+    before = service.repository.inspect("claim", document_id)[0]
+
+    def resume(data, page_numbers):
+        assert page_numbers == {2}
+        yield PageResult(2, "blank", None, 200, 200, 0)
+
+    service.extractor.iter_bytes = resume
+    run_id = service.ingest("claim", document_id, path)
+    assert str(run_id) == before["run_id"]
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "completed" and result["pages"][0]["preview"] == "saved"
+
+
+def test_concurrent_attempt_is_rejected_without_duplicate_run(sessions, tmp_path):
+    from app.services.pdf_input import PdfInputError
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    original = service.extractor.iter_bytes
+
+    def competing_attempt(data, page_numbers):
+        with pytest.raises(PdfInputError, match="processing_in_progress"):
+            service.ingest("claim", document_id, path)
+        yield from original(data, page_numbers)
+
+    service.extractor.iter_bytes = competing_attempt
+    run_id = service.ingest("claim", document_id, path)
+    with sessions() as session:
+        assert session.get(DocumentProcessingRun, run_id).status == "completed"
+        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun)) == 1
+
+
+def test_retry_failure_keeps_previous_partial_page_text(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "failed", "mixed", 200, 200, 0, [TextBlock("keep me", "native")], error="ocr_timeout"),
+        PageResult(2, "blank", None, 200, 200, 0),
+    ])
+    run_id = service.ingest("claim", document_id, path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "failed", "ocr", 200, 200, 0, error="ocr_unavailable"),
+    ])
+    assert service.ingest("claim", document_id, path) == run_id
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "partial"
+    assert result["pages"][0]["preview"] == "keep me"
+    assert result["pages"][0]["error"] == "ocr_unavailable"
+
+
+def test_lost_claim_connection_stops_writes_and_allows_resume(sessions, tmp_path, monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+    from app.services.pdf_extraction import PageResult, TextBlock
+    from app.services.pdf_input import PdfInputError
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    original_save = DocumentRepository.save_page
+    backend_pid = []
+
+    def capture(self, run_id, page):
+        original_save(self, run_id, page)
+        if not backend_pid:
+            backend_pid.append(self.claim_connection.scalar(select(func.pg_backend_pid())))
+            self.claim_connection.commit()
+
+    monkeypatch.setattr(DocumentRepository, "save_page", capture)
+
+    def disconnected(data, page_numbers):
+        yield PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("saved", "native")])
+        with sessions.begin() as session:
+            assert session.scalar(select(func.pg_terminate_backend(backend_pid[0])))
+        yield PageResult(2, "blank", None, 200, 200, 0)
+
+    service.extractor.iter_bytes = disconnected
+    with pytest.raises((SQLAlchemyError, PdfInputError)):
+        service.ingest("claim", document_id, path)
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["status"] == "processing" and len(result["pages"]) == 1
+    monkeypatch.setattr(DocumentRepository, "save_page", original_save)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([PageResult(2, "blank", None, 200, 200, 0)])
+    assert str(service.ingest("claim", document_id, path)) == result["run_id"]
+    assert service.repository.inspect("claim", document_id)[0]["status"] == "completed"
+
+
+def test_failed_replacement_rolls_back_to_previous_page(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "failed", "mixed", 200, 200, 0, [TextBlock("keep old", "native")], error="ocr_timeout"),
+        PageResult(2, "blank", None, 200, 200, 0),
+    ])
+    run_id = service.ingest("claim", document_id, path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("invalid", "bad_method")]),
+    ])
+    with pytest.raises(IntegrityError):
+        service.ingest("claim", document_id, path)
+    result = service.repository.inspect("claim", document_id)[0]
+    assert result["run_id"] == str(run_id) and result["error_code"] == "persistence_failed"
+    assert result["pages"][0]["preview"] == "keep old"

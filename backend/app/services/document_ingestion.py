@@ -39,19 +39,31 @@ class DocumentIngestionService:
             "max_ocr_pixels": self.extractor.max_pixels,
         }
         encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
-        run_id = self.repository.create(source, config, hashlib.sha256(encoded).hexdigest(), EXTRACTOR_VERSION)
-        self.repository.start(run_id)
-        stage = "extraction_failed"
-        try:
-            for expected, page in enumerate(self.extractor.iter_bytes(data), start=1):
-                if page.page_number != expected or expected > source.page_count:
-                    raise PdfInputError("page_count_mismatch")
-                stage = "persistence_failed"
-                self.repository.save_page(run_id, page)
-                stage = "extraction_failed"
-        except Exception as exc:
-            code = exc.code if isinstance(exc, PdfInputError) else stage
-            self.repository.finish(run_id, code)
-            raise
-        self.repository.finish(run_id)
-        return run_id
+        config_hash = hashlib.sha256(encoded).hexdigest()
+        with self.repository.claim(source, config_hash) as repository:
+            existing = repository.find(source, config_hash)
+            if existing is None:
+                run_id = repository.create(source, config, config_hash, EXTRACTOR_VERSION)
+                completed = set()
+            else:
+                run_id, status, completed = existing
+                if status == "completed":
+                    return run_id
+            remaining = set(range(1, source.page_count + 1)) - completed
+            repository.start(run_id)
+            stage = "extraction_failed"
+            try:
+                expected = iter(sorted(remaining))
+                for page in self.extractor.iter_bytes(data, remaining):
+                    if page.page_number != next(expected, None):
+                        raise PdfInputError("page_count_mismatch")
+                    stage = "persistence_failed"
+                    repository.save_page(run_id, page)
+                    stage = "extraction_failed"
+                missing = next(expected, None) is not None
+            except Exception as exc:
+                code = exc.code if isinstance(exc, PdfInputError) else stage
+                repository.finish(run_id, code)
+                raise
+            repository.finish(run_id, "page_count_mismatch" if missing else None)
+            return run_id

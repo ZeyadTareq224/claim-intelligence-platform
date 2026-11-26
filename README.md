@@ -165,7 +165,9 @@ pytest -q tests/ocr
 
 Apply the latest Alembic migration, then `DocumentIngestionService` can validate a PDF, extract the preserved bytes, and store a processing run with its document reference, source hash, configuration, pages, and ordered blocks in PostgreSQL. Policy document versions are recorded at processing time. Raw block text remains separate from normalized text. The extractor service is available to Python callers; the existing CLI and upload screen do not invoke it yet.
 
-The database rejects duplicate runs for the same document version, source hash and extraction configuration. A changed source or extractor version can be stored as a new run. Each run is recorded as pending and then processing; each page is saved in a separate transaction. Completed, partial and failed statuses reflect the saved pages and any errors. An abrupt interruption leaves the run processing, with saved pages available; it cannot yet be distinguished automatically from a live run. Returning prior results on repeat and retrying failed or interrupted pages are not implemented yet.
+The database identifies a run by document version, source hash and extraction configuration. Repeating a completed run returns its existing ID. Repeating a partial, failed, pending or interrupted run retries only failed or unfinished pages; completed and blank pages are retained. Changed source bytes or extractor configuration produce a separate run. Each page is saved in its own transaction, and processing status reflects the saved output and errors.
+
+PostgreSQL advisory locks prevent concurrent attempts for the same run; a competing attempt returns `processing_in_progress`. The claim and page writes use the same database connection, and PostgreSQL releases the claim if the connection closes. An abrupt interruption can leave a run marked processing until the command is repeated, when an unclaimed run can resume. This policy requires a direct PostgreSQL connection or session pooling; transaction-pooling proxies cannot safely hold a session advisory lock.
 
 Inspect all runs for an existing document (the output includes short text previews):
 
