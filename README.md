@@ -147,3 +147,16 @@ python -m app.cli validate-pdf --source-type policy --document-id <document-uuid
 ```
 
 Use `--source-type claim` for a claim document. The command checks the record, reads the file as a PDF (regardless of extension), rejects encrypted, malformed, empty and over-limit PDFs, and prints the SHA-256 and page count. It stores the unchanged bytes under their hash in `.document-storage/` relative to the working directory; set `PDF_STORAGE_DIR` to an application-controlled persistent directory to change that location. Defaults are 25 MiB (`PDF_MAX_BYTES`) and 200 pages (`PDF_MAX_PAGES`). Do not use temporary storage if the preserved source must remain available. This local operator command does not provide authentication or authorization.
+
+## PDF page extraction service
+
+`app.services.pdf_extraction.PdfExtractor` returns page results with ordered native or OCR text blocks, method, bounding boxes and page-level errors. Construct it with `TesseractOcr(language="eng", timeout=60)` and `PdfExtractor(dpi=200)` to change OCR language, timeout or resolution. The Docker image installs Tesseract and English data; local installations need the `tesseract` executable and the requested language data. OCR images are capped at 25 million pixels by default. Arabic is configurable if its language data is installed, but has not been evaluated.
+
+The extractor can process a validated file, but is not yet connected to the CLI or upload screen and does not persist results. Text usability and image-region detection are heuristics; complex layouts, image-only blank pages, overlapping image and text layers, and reading order can be misclassified. A failed OCR region retains any native blocks but marks the page failed. Bounding boxes use unrotated page coordinates in PDF points. Native extraction currently has no enforced timeout; OCR has a timeout.
+
+Run the real OCR smoke test with Tesseract and English language data installed:
+
+```bash
+cd backend
+pytest -q tests/ocr
+```
