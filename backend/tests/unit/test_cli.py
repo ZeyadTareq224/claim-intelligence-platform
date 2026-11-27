@@ -1,9 +1,18 @@
 import json
 from uuid import uuid4
 
+import pytest
+
 from app import cli
 from app.ai.extraction import ClaimExtraction
 from app.ai.providers.base import ProviderError, ProviderResult
+
+
+@pytest.fixture(autouse=True)
+def isolate_provider_configuration(monkeypatch):
+    monkeypatch.setenv("AI_PROVIDER", "openai")
+    for name in ("OPENAI_API_KEY", "OPENAI_MODEL", "GEMINI_API_KEY", "GEMINI_MODEL"):
+        monkeypatch.delenv(name, raising=False)
 
 
 class FakeProvider:
