@@ -70,9 +70,20 @@ jobs:
           alembic upgrade head
           DATABASE_URL="$TEST_DATABASE_URL" alembic upgrade head
 
-      - name: Run real OCR smoke test
+      - name: Run real OCR and fixture evaluation tests
         working-directory: backend
-        run: pytest -q tests/ocr
+        run: |
+          results="$RUNNER_TEMP/ocr-results.xml"
+          pytest -q -rs tests/ocr --junitxml="$results"
+          python - "$results" <<'PYCODE'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          skipped = sum(int(suite.get("skipped", "0")) for suite in root.iter("testsuite"))
+          if skipped:
+              raise SystemExit(f"Expected no skipped OCR tests, found {skipped}")
+          PYCODE
 
       - name: Run unit tests
         working-directory: backend

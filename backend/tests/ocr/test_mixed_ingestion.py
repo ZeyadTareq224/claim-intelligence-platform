@@ -39,6 +39,10 @@ def source(monkeypatch):
 def test_cli_ingests_mixed_pdf_and_reuses_run(source, monkeypatch, tmp_path, capsys):
     sessions, document_id = source
     monkeypatch.setenv("PDF_STORAGE_DIR", str(tmp_path / "storage"))
+    for name, value in {"PDF_OCR_LANGUAGE": "eng", "PDF_OCR_DPI": "200", "PDF_OCR_TIMEOUT_SECONDS": "60",
+                        "PDF_OCR_MAX_PIXELS": "25000000", "PDF_NATIVE_TIMEOUT_SECONDS": "30",
+                        "PDF_MAX_BYTES": "26214400", "PDF_MAX_PAGES": "200"}.items():
+        monkeypatch.setenv(name, value)
     drawing = pymupdf.open()
     drawing_page = drawing.new_page(width=500, height=160)
     drawing_page.insert_text((30, 60), "CLAIM NUMBER ABC123", fontsize=26)
