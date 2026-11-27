@@ -170,9 +170,9 @@ python -m app.cli ingest-pdf --source-type policy --document-id <document-uuid> 
 python -m app.cli inspect-document --source-type policy --document-id <document-uuid>
 ```
 
-Use `--source-type claim` for a claim document. Ingestion returns a nonzero exit code for partial or failed runs. Output includes short text previews and coordinates. The frontend's **PDF upload** screen invokes the same service.
+Use `--source-type claim` for a claim document. Ingestion returns a nonzero exit code for partial or failed runs. Output includes short text previews and coordinates. Add `--full-text` to `inspect-document` to include raw block text in its output; the frontend provides a **Show full extracted text** checkbox. These explicit inspection options display sensitive contents and should be used in a suitable environment. The frontend's **PDF upload** screen invokes the same service.
 
-The database identifies a run by document version, source hash and extraction configuration. Repeating a completed run returns its existing ID. Repeating a partial, failed, pending or interrupted run retries only failed or unfinished pages; completed and blank pages are retained. Changed source bytes or extractor configuration produce a separate run. Each page is saved in its own transaction, and processing status reflects the saved output and errors.
+The database identifies a run by document version, source hash and extraction configuration. Repeating a completed run returns its existing ID. Repeating a partial, failed, pending or interrupted run retries only failed or unfinished pages; completed and blank pages are retained. Changed source bytes or extractor configuration, including the detected Tesseract version, produce a separate run. Each page is saved in its own transaction, and processing status reflects the saved output and errors.
 
 PostgreSQL advisory locks prevent concurrent attempts for the same run; a competing attempt returns `processing_in_progress`. The claim and page writes use the same database connection, and PostgreSQL releases the claim if the connection closes. An abrupt interruption can leave a run marked processing until the command is repeated, when an unclaimed run can resume. This policy requires a direct PostgreSQL connection or session pooling; transaction-pooling proxies cannot safely hold a session advisory lock.
 
@@ -182,3 +182,7 @@ Inspect all runs for an existing document (the output includes short text previe
 cd backend
 python -m app.cli inspect-document --source-type policy --document-id <document-uuid>
 ```
+
+## Week 2 document-ingestion evaluation
+
+The synthetic fixtures, labeled regression runner, and measured results are described in [the Week 2 evaluation](docs/week-02-evaluation.md). The [architecture note](docs/week-02-architecture.md) covers routing, evidence, retries, concurrency, logging, and known limitations. The evaluation uses only fictional data and requires a separate migrated PostgreSQL database and real English Tesseract data.

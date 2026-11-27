@@ -1,0 +1,179 @@
+{
+  "source_type": "policy",
+  "document_id": "ae103f0e-3117-559f-a9e8-1ea3a8e8612c",
+  "totals": {
+    "pages": 5,
+    "nonblank_pages": 4,
+    "native_expected": 2,
+    "native_covered": 2,
+    "ocr_fallback_pages": 2,
+    "method_correct": 5,
+    "provenance_correct": 5,
+    "policy_correct": 4,
+    "policy_total": 4,
+    "amount_correct": 4,
+    "amount_total": 4,
+    "ocr_char_edits": 0,
+    "ocr_reference_chars": 84,
+    "ocr_word_edits": 0,
+    "ocr_reference_words": 14,
+    "ocr_cer": 0.0,
+    "ocr_wer": 0.0
+  },
+  "passed": true,
+  "cases": [
+    {
+      "file": "digital-policy.pdf",
+      "source_hash": "48f06258749ca7b484892a6e966b11281f2a434f693aa15bee3d9f2e8dca56f5",
+      "run_id": "61af563a-9a36-431c-9997-16bf96c28046",
+      "run_status": "completed",
+      "extractor_config": {
+        "ocr_dpi": 200,
+        "ocr_timeout": 60.0,
+        "ocr_language": "eng",
+        "max_ocr_pixels": 25000000,
+        "native_timeout": 30.0,
+        "pymupdf_version": "1.28.2",
+        "extractor_version": "2",
+        "tesseract_version": "5.5.0"
+      },
+      "pages": [
+        {
+          "number": 1,
+          "expected_method": "native",
+          "method": "native",
+          "status": "completed",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "POLICY NUMBER P-1001 SUM INSURED EGP 12000",
+          "actual_text": "POLICY NUMBER P-1001 SUM INSURED EGP 12000",
+          "expected_policy_number": "P-1001",
+          "actual_policy_number": "P-1001",
+          "expected_amount": "EGP 12000",
+          "actual_amount": "EGP 12000"
+        }
+      ]
+    },
+    {
+      "file": "scanned-policy.pdf",
+      "source_hash": "2c66604419029ca9fd091f82db9ab33bf0a9f71f7fbc70e155549d5e032e0e0a",
+      "run_id": "dea730d2-27e7-4495-8a60-a0fbc8ff68bb",
+      "run_status": "completed",
+      "extractor_config": {
+        "ocr_dpi": 200,
+        "ocr_timeout": 60.0,
+        "ocr_language": "eng",
+        "max_ocr_pixels": 25000000,
+        "native_timeout": 30.0,
+        "pymupdf_version": "1.28.2",
+        "extractor_version": "2",
+        "tesseract_version": "5.5.0"
+      },
+      "pages": [
+        {
+          "number": 1,
+          "expected_method": "ocr",
+          "method": "ocr",
+          "status": "completed",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "POLICY NUMBER P-2002 SUM INSURED EGP 25000",
+          "actual_text": "POLICY NUMBER P-2002 SUM INSURED EGP 25000",
+          "expected_policy_number": "P-2002",
+          "actual_policy_number": "P-2002",
+          "expected_amount": "EGP 25000",
+          "actual_amount": "EGP 25000"
+        }
+      ]
+    },
+    {
+      "file": "mixed-policy.pdf",
+      "source_hash": "1a0fc6aea26b952f3dc9ce6a9ab27aec1c86da740400811d5cf31db1e945628e",
+      "run_id": "5dfaf336-2b1a-473f-aa4c-877cfdc1b89d",
+      "run_status": "completed",
+      "extractor_config": {
+        "ocr_dpi": 200,
+        "ocr_timeout": 60.0,
+        "ocr_language": "eng",
+        "max_ocr_pixels": 25000000,
+        "native_timeout": 30.0,
+        "pymupdf_version": "1.28.2",
+        "extractor_version": "2",
+        "tesseract_version": "5.5.0"
+      },
+      "pages": [
+        {
+          "number": 1,
+          "expected_method": "native",
+          "method": "native",
+          "status": "completed",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "POLICY NUMBER P-3003 SUM INSURED EGP 18000",
+          "actual_text": "POLICY NUMBER P-3003 SUM INSURED EGP 18000",
+          "expected_policy_number": "P-3003",
+          "actual_policy_number": "P-3003",
+          "expected_amount": "EGP 18000",
+          "actual_amount": "EGP 18000"
+        },
+        {
+          "number": 2,
+          "expected_method": "ocr",
+          "method": "ocr",
+          "status": "completed",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "POLICY NUMBER P-3003 SUM INSURED EGP 18000",
+          "actual_text": "POLICY NUMBER P-3003 SUM INSURED EGP 18000",
+          "expected_policy_number": "P-3003",
+          "actual_policy_number": "P-3003",
+          "expected_amount": "EGP 18000",
+          "actual_amount": "EGP 18000"
+        }
+      ]
+    },
+    {
+      "file": "blank.pdf",
+      "source_hash": "bb2b9e4c369a0c20fab2ab4511a9e2afed618f6c90115261c27bec8522af9764",
+      "run_id": "15ce5f4d-65ef-41d8-baa9-d2fc546aa460",
+      "run_status": "completed",
+      "extractor_config": {
+        "ocr_dpi": 200,
+        "ocr_timeout": 60.0,
+        "ocr_language": "eng",
+        "max_ocr_pixels": 25000000,
+        "native_timeout": 30.0,
+        "pymupdf_version": "1.28.2",
+        "extractor_version": "2",
+        "tesseract_version": "5.5.0"
+      },
+      "pages": [
+        {
+          "number": 1,
+          "expected_method": "blank",
+          "method": "blank",
+          "status": "blank",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "",
+          "actual_text": "",
+          "expected_policy_number": null,
+          "actual_policy_number": null,
+          "expected_amount": null,
+          "actual_amount": null
+        }
+      ]
+    },
+    {
+      "file": "malformed.pdf",
+      "expected_error": "invalid_pdf",
+      "actual_error": "invalid_pdf",
+      "no_new_run": true
+    }
+  ]
+}
