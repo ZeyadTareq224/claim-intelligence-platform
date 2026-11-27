@@ -73,7 +73,7 @@ def test_ocr_failure_keeps_other_pages_and_native_text():
 
 def test_existing_text_layer_prevents_ocr():
     doc = make_document()
-    doc[1].insert_text((40, 60), "Scanned page with existing text layer")
+    doc[1].insert_text((40, 80), "Scanned page", fontsize=20)
     ocr = FakeOcr()
     page = PdfExtractor(ocr)._extract_page(doc[1])
     assert page.method == "native" and ocr.calls == 0
@@ -283,3 +283,98 @@ def test_tesseract_version_is_recorded_without_raw_engine_output():
         assert TesseractOcr().engine_version() == "5.5.0"
     with patch("app.services.pdf_extraction.subprocess.run", side_effect=FileNotFoundError()):
         assert TesseractOcr().engine_version() == "unavailable"
+
+
+def test_scanned_page_with_small_selectable_header_ocr_recovers_body_without_duplicate():
+    source = pymupdf.open()
+    scanned = source.new_page(width=612, height=792)
+    scanned.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    scanned.insert_text((72, 190), "SUM INSURED EGP 32000", fontsize=22)
+    image = scanned.get_pixmap(matrix=pymupdf.Matrix(2, 2)).tobytes("png")
+    document = pymupdf.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=image)
+    page.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+
+    class HybridOcr:
+        calls = 0
+
+        def recognize(self, image):
+            self.calls += 1
+            scale = 200 / 72
+            def box(x0, y0, x1, y1):
+                return tuple(round(value * scale) for value in (x0, y0, x1, y1))
+            return [("POLICY", box(72, 72, 155, 92), 95),
+                    ("SUM", box(72, 172, 120, 192), 95),
+                    ("32000", box(250, 172, 330, 192), 95)]
+
+    ocr = HybridOcr()
+    result = PdfExtractor(ocr)._extract_page(page)
+    assert result.status == "completed" and result.method == "mixed" and ocr.calls == 1
+    assert sum("POLICY" in block.text for block in result.blocks) == 1
+    assert any(block.text == "32000" and block.method == "ocr" for block in result.blocks)
+    document.close()
+    source.close()
+
+
+def test_rotated_scanned_page_with_selectable_header_still_uses_ocr():
+    source = pymupdf.open()
+    scanned = source.new_page(width=612, height=792)
+    scanned.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    scanned.insert_text((72, 190), "SUM INSURED EGP 32000", fontsize=22)
+    image = scanned.get_pixmap(matrix=pymupdf.Matrix(2, 2)).tobytes("png")
+    document = pymupdf.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=image)
+    page.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    page.set_rotation(90)
+    ocr = FakeOcr()
+    result = PdfExtractor(ocr)._extract_page(page)
+    assert result.status == "completed" and result.method == "mixed" and ocr.calls == 1
+    document.close()
+    source.close()
+
+
+def test_complete_selectable_layer_does_not_trigger_ocr():
+    source = pymupdf.open()
+    scanned = source.new_page(width=612, height=792)
+    scanned.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    scanned.insert_text((72, 190), "SUM INSURED EGP 32000", fontsize=22)
+    image = scanned.get_pixmap(matrix=pymupdf.Matrix(2, 2)).tobytes("png")
+    document = pymupdf.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=image)
+    page.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    page.insert_text((72, 190), "SUM INSURED EGP 32000", fontsize=22)
+    ocr = FakeOcr()
+    result = PdfExtractor(ocr)._extract_page(page)
+    assert result.status == "completed" and result.method == "native" and ocr.calls == 0
+    document.close()
+    source.close()
+
+
+def test_ocr_deduplication_keeps_same_word_at_a_different_location():
+    from app.services.pdf_extraction import TextBlock
+
+    native = TextBlock("POLICY NUMBER", "native", (10, 10, 200, 30))
+    duplicate = TextBlock("Policy", "ocr", (10, 10, 80, 30))
+    repeated = TextBlock("Policy", "ocr", (10, 100, 80, 120))
+    assert PdfExtractor._duplicate_block(duplicate, [native])
+    assert not PdfExtractor._duplicate_block(repeated, [native])
+
+
+def test_hybrid_ocr_failure_keeps_selectable_header():
+    source = pymupdf.open()
+    scanned = source.new_page(width=612, height=792)
+    scanned.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    scanned.insert_text((72, 190), "SUM INSURED EGP 32000", fontsize=22)
+    image = scanned.get_pixmap(matrix=pymupdf.Matrix(2, 2)).tobytes("png")
+    document = pymupdf.open()
+    page = document.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=image)
+    page.insert_text((72, 90), "POLICY NUMBER P-4004", fontsize=22)
+    result = PdfExtractor(FakeOcr("ocr_timeout"))._extract_page(page)
+    assert result.status == "failed" and result.error == "ocr_timeout"
+    assert result.method == "mixed" and "P-4004" in result.blocks[0].text
+    document.close()
+    source.close()

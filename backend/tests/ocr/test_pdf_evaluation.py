@@ -39,11 +39,19 @@ def test_labeled_fixtures_and_persisted_provenance(monkeypatch, tmp_path):
         first = evaluate(sessions, document_id)
         assert first["passed"], first
         assert first["totals"]["native_covered"] == first["totals"]["native_expected"] == 2
-        assert first["totals"]["ocr_fallback_pages"] == 2
-        assert first["totals"]["provenance_correct"] == first["totals"]["pages"] == 5
+        assert first["totals"]["ocr_fallback_pages"] == 3
+        assert first["totals"]["provenance_correct"] == first["totals"]["pages"] == 6
         second = evaluate(sessions, document_id)
         assert second["passed"] and first["totals"] == second["totals"]
         assert [case.get("run_id") for case in first["cases"]] == [case.get("run_id") for case in second["cases"]]
+
+        # A new extractor version prevents reuse of the successful runs in this negative check.
+        monkeypatch.setattr("app.services.document_ingestion.EXTRACTOR_VERSION", "negative-test")
+        monkeypatch.setattr("app.services.pdf_extraction.TesseractOcr.recognize",
+                            lambda self, image: [("BROKEN", (10, 10, 80, 40), 50.0)])
+        failed = evaluate(sessions, document_id)
+        assert not failed["passed"] and failed["totals"]["ocr_cer"] > 0.2
+        assert failed["totals"]["amount_correct"] < failed["totals"]["amount_total"]
     finally:
         with sessions.begin() as session:
             session.execute(delete(DocumentProcessingRun).where(DocumentProcessingRun.policy_document_id == document_id))

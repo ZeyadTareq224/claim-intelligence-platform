@@ -105,6 +105,7 @@ def test_persists_document_version_hash_pages_and_raw_blocks(sessions, tmp_path,
         assert first.blocks[0].block_index == 0 and "P-123" in first.blocks[0].raw_text
         assert first.blocks[0].normalized_text == " ".join(first.blocks[0].raw_text.split())
         assert first.blocks[0].bbox and first.blocks[0].method == "native"
+        assert first.blocks[0].block_type == "unknown"
     assert (service.inputs.storage_dir / f"{hashlib.sha256(data).hexdigest()}.pdf").read_bytes() == data
 
 

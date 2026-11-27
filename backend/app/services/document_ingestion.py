@@ -15,7 +15,7 @@ from app.services.pdf_extraction import PdfExtractor, TesseractOcr
 from app.services.pdf_input import PdfInputError, PdfInputService
 
 
-EXTRACTOR_VERSION = "2"
+EXTRACTOR_VERSION = "3"
 logger = logging.getLogger(__name__)
 
 

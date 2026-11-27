@@ -28,6 +28,9 @@ def create(name, pages):
             text_page(doc, lines)
         elif kind == "ocr":
             scanned_page(doc, lines)
+        elif kind == "hybrid":
+            scanned_page(doc, lines)
+            doc[-1].insert_text((72, 90), lines[0], fontsize=22, fontname="helv")
         else:
             doc.new_page(width=612, height=792)
     doc.save(ROOT / name, garbage=4, deflate=True, no_new_id=True)
@@ -39,6 +42,7 @@ def main():
     create("scanned-policy.pdf", [("ocr", ["POLICY NUMBER P-2002", "SUM INSURED EGP 25000"])])
     create("mixed-policy.pdf", [("native", ["POLICY NUMBER P-3003", "SUM INSURED EGP 18000"]),
                                 ("ocr", ["POLICY NUMBER P-3003", "SUM INSURED EGP 18000"])])
+    create("hybrid-policy.pdf", [("hybrid", ["POLICY NUMBER P-4004", "SUM INSURED EGP 32000"])])
     create("blank.pdf", [("blank", [])])
     (ROOT / "malformed.pdf").write_bytes(b"%PDF-1.7\nThis intentionally malformed PDF has no document structure.\n")
 

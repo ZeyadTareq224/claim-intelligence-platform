@@ -48,6 +48,19 @@
       ]
     },
     {
+      "file": "hybrid-policy.pdf",
+      "sha256": "521af88397a150ce5677d72137b4bfb00f8e9cb2981feb88b05d22660b2c7b7b",
+      "pages": [
+        {
+          "number": 1,
+          "method": "mixed",
+          "text": "POLICY NUMBER P-4004 SUM INSURED EGP 32000",
+          "policy_number": "P-4004",
+          "amount": "EGP 32000"
+        }
+      ]
+    },
+    {
       "file": "blank.pdf",
       "sha256": "bb2b9e4c369a0c20fab2ab4511a9e2afed618f6c90115261c27bec8522af9764",
       "pages": [

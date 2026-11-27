@@ -227,21 +227,22 @@ class PdfExtractor:
                       for block in page.get_text("blocks", sort=True) if block[6] == 0 and block[4].strip()]
             text = " ".join(block.text for block in native)
             if usable_text(text):
-                # Detect separate image regions, but skip images overlapping an existing text layer.
                 regions = []
                 for info in page.get_image_info():
                     rect = pymupdf.Rect(info["bbox"]) & page.cropbox
                     if rect.is_empty or rect.width < 25 or rect.height < 25:
                         continue
-                    if any(not (pymupdf.Rect(block.bbox) & rect).is_empty for block in native):
-                        continue
-                    regions.append(rect)
+                    overlaps_native = any(not (pymupdf.Rect(block.bbox) & rect).is_empty for block in native)
+                    if not overlaps_native or self._has_uncovered_ink(page, rect, native):
+                        regions.append(rect)
                 if not regions:
                     return PageResult(**base, status="completed", method="native", blocks=native)
                 reason = "image_text_region"
                 blocks = list(native)
                 for region in regions:
-                    blocks.extend(self._ocr_region(page, region) or [])
+                    for block in self._ocr_region(page, region) or []:
+                        if not self._duplicate_block(block, blocks):
+                            blocks.append(block)
                 blocks.sort(key=lambda block: (block.bbox[1], block.bbox[0]))
                 method = "mixed" if len(blocks) > len(native) else "native"
                 return PageResult(**base, status="completed", method=method, blocks=blocks,
@@ -261,6 +262,41 @@ class PdfExtractor:
                               blocks=retained, reason=reason, error=exc.code)
         except (RuntimeError, ValueError):
             return PageResult(**base, status="failed", method=None, error="page_extraction_failed")
+
+    def _has_uncovered_ink(self, page, region, native):
+        # Mask native-text areas in a low-resolution rendering before looking for additional ink.
+        scale = 0.5
+        clip = (region * page.rotation_matrix) & page.rect
+        if clip.width * scale * clip.height * scale > self.max_pixels:
+            raise OcrError("ocr_image_too_large")
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), clip=clip,
+                              colorspace=pymupdf.csGRAY, alpha=False)
+        pixels = bytearray(pix.samples)
+        for block in native:
+            bounds = (pymupdf.Rect(block.bbox) * page.rotation_matrix) & clip
+            if bounds.is_empty:
+                continue
+            x0 = max(0, math.floor(bounds.x0 * scale - pix.x) - 2)
+            y0 = max(0, math.floor(bounds.y0 * scale - pix.y) - 2)
+            x1 = min(pix.width, math.ceil(bounds.x1 * scale - pix.x) + 2)
+            y1 = min(pix.height, math.ceil(bounds.y1 * scale - pix.y) + 2)
+            white = b"\xff" * max(0, x1 - x0)
+            for y in range(y0, y1):
+                pixels[y * pix.width + x0:y * pix.width + x1] = white
+        return sum(value < 200 for value in pixels) >= 8
+
+    @staticmethod
+    def _duplicate_block(candidate, blocks):
+        word = "".join(char for char in candidate.text.casefold() if char.isalnum())
+        if not word or candidate.bbox is None:
+            return False
+        for block in blocks:
+            if block.bbox is None or (pymupdf.Rect(candidate.bbox) & pymupdf.Rect(block.bbox)).is_empty:
+                continue
+            words = ("".join(char for char in token.casefold() if char.isalnum()) for token in block.text.split())
+            if word in words:
+                return True
+        return False
 
     def _ocr_region(self, page, region):
         clip = page.rect if region is None else (region * page.rotation_matrix) & page.rect

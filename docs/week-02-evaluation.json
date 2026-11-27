@@ -2,30 +2,36 @@
   "source_type": "policy",
   "document_id": "ae103f0e-3117-559f-a9e8-1ea3a8e8612c",
   "totals": {
-    "pages": 5,
-    "nonblank_pages": 4,
+    "pages": 6,
+    "nonblank_pages": 5,
     "native_expected": 2,
     "native_covered": 2,
-    "ocr_fallback_pages": 2,
-    "method_correct": 5,
-    "provenance_correct": 5,
-    "policy_correct": 4,
-    "policy_total": 4,
-    "amount_correct": 4,
-    "amount_total": 4,
+    "ocr_fallback_pages": 3,
+    "method_correct": 6,
+    "provenance_correct": 6,
+    "policy_correct": 5,
+    "policy_total": 5,
+    "amount_correct": 5,
+    "amount_total": 5,
     "ocr_char_edits": 0,
     "ocr_reference_chars": 84,
     "ocr_word_edits": 0,
     "ocr_reference_words": 14,
+    "hybrid_char_edits": 0,
+    "hybrid_reference_chars": 42,
+    "hybrid_word_edits": 0,
+    "hybrid_reference_words": 7,
     "ocr_cer": 0.0,
-    "ocr_wer": 0.0
+    "ocr_wer": 0.0,
+    "hybrid_cer": 0.0,
+    "hybrid_wer": 0.0
   },
   "passed": true,
   "cases": [
     {
       "file": "digital-policy.pdf",
       "source_hash": "48f06258749ca7b484892a6e966b11281f2a434f693aa15bee3d9f2e8dca56f5",
-      "run_id": "61af563a-9a36-431c-9997-16bf96c28046",
+      "run_id": "1c5d0cfa-09c3-4e62-b2b6-b4529bd9ffb8",
       "run_status": "completed",
       "extractor_config": {
         "ocr_dpi": 200,
@@ -34,7 +40,7 @@
         "max_ocr_pixels": 25000000,
         "native_timeout": 30.0,
         "pymupdf_version": "1.28.2",
-        "extractor_version": "2",
+        "extractor_version": "3",
         "tesseract_version": "5.5.0"
       },
       "pages": [
@@ -58,7 +64,7 @@
     {
       "file": "scanned-policy.pdf",
       "source_hash": "2c66604419029ca9fd091f82db9ab33bf0a9f71f7fbc70e155549d5e032e0e0a",
-      "run_id": "dea730d2-27e7-4495-8a60-a0fbc8ff68bb",
+      "run_id": "ad9f395c-a774-4697-8594-2abb036fcd5d",
       "run_status": "completed",
       "extractor_config": {
         "ocr_dpi": 200,
@@ -67,7 +73,7 @@
         "max_ocr_pixels": 25000000,
         "native_timeout": 30.0,
         "pymupdf_version": "1.28.2",
-        "extractor_version": "2",
+        "extractor_version": "3",
         "tesseract_version": "5.5.0"
       },
       "pages": [
@@ -91,7 +97,7 @@
     {
       "file": "mixed-policy.pdf",
       "source_hash": "1a0fc6aea26b952f3dc9ce6a9ab27aec1c86da740400811d5cf31db1e945628e",
-      "run_id": "5dfaf336-2b1a-473f-aa4c-877cfdc1b89d",
+      "run_id": "822c0317-8859-48d2-9466-d50cfdadae1e",
       "run_status": "completed",
       "extractor_config": {
         "ocr_dpi": 200,
@@ -100,7 +106,7 @@
         "max_ocr_pixels": 25000000,
         "native_timeout": 30.0,
         "pymupdf_version": "1.28.2",
-        "extractor_version": "2",
+        "extractor_version": "3",
         "tesseract_version": "5.5.0"
       },
       "pages": [
@@ -137,9 +143,9 @@
       ]
     },
     {
-      "file": "blank.pdf",
-      "source_hash": "bb2b9e4c369a0c20fab2ab4511a9e2afed618f6c90115261c27bec8522af9764",
-      "run_id": "15ce5f4d-65ef-41d8-baa9-d2fc546aa460",
+      "file": "hybrid-policy.pdf",
+      "source_hash": "521af88397a150ce5677d72137b4bfb00f8e9cb2981feb88b05d22660b2c7b7b",
+      "run_id": "c9b8d743-8be2-4e62-8510-053d95264c1e",
       "run_status": "completed",
       "extractor_config": {
         "ocr_dpi": 200,
@@ -148,7 +154,40 @@
         "max_ocr_pixels": 25000000,
         "native_timeout": 30.0,
         "pymupdf_version": "1.28.2",
-        "extractor_version": "2",
+        "extractor_version": "3",
+        "tesseract_version": "5.5.0"
+      },
+      "pages": [
+        {
+          "number": 1,
+          "expected_method": "mixed",
+          "method": "mixed",
+          "status": "completed",
+          "error": null,
+          "method_correct": true,
+          "provenance_correct": true,
+          "expected_text": "POLICY NUMBER P-4004 SUM INSURED EGP 32000",
+          "actual_text": "POLICY NUMBER P-4004 SUM INSURED EGP 32000",
+          "expected_policy_number": "P-4004",
+          "actual_policy_number": "P-4004",
+          "expected_amount": "EGP 32000",
+          "actual_amount": "EGP 32000"
+        }
+      ]
+    },
+    {
+      "file": "blank.pdf",
+      "source_hash": "bb2b9e4c369a0c20fab2ab4511a9e2afed618f6c90115261c27bec8522af9764",
+      "run_id": "a80e1d2a-b46d-4ee9-8952-0508900f620f",
+      "run_status": "completed",
+      "extractor_config": {
+        "ocr_dpi": 200,
+        "ocr_timeout": 60.0,
+        "ocr_language": "eng",
+        "max_ocr_pixels": 25000000,
+        "native_timeout": 30.0,
+        "pymupdf_version": "1.28.2",
+        "extractor_version": "3",
         "tesseract_version": "5.5.0"
       },
       "pages": [

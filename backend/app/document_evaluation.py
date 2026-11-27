@@ -51,7 +51,8 @@ def evaluate(sessions, document_id, fixtures=FIXTURES):
     totals = {"pages": 0, "nonblank_pages": 0, "native_expected": 0, "native_covered": 0,
               "ocr_fallback_pages": 0, "method_correct": 0, "provenance_correct": 0,
               "policy_correct": 0, "policy_total": 0, "amount_correct": 0, "amount_total": 0,
-              "ocr_char_edits": 0, "ocr_reference_chars": 0, "ocr_word_edits": 0, "ocr_reference_words": 0}
+              "ocr_char_edits": 0, "ocr_reference_chars": 0, "ocr_word_edits": 0, "ocr_reference_words": 0,
+              "hybrid_char_edits": 0, "hybrid_reference_chars": 0, "hybrid_word_edits": 0, "hybrid_reference_words": 0}
     results = []
     for case in manifest["cases"]:
         path = fixtures / case["file"]
@@ -107,6 +108,11 @@ def evaluate(sessions, document_id, fixtures=FIXTURES):
                     totals["ocr_reference_chars"] += len(reference)
                     totals["ocr_word_edits"] += distance(reference.split(), actual_text.split())
                     totals["ocr_reference_words"] += len(reference.split())
+                if expected["method"] == "mixed":
+                    totals["hybrid_char_edits"] += distance(reference, actual_text)
+                    totals["hybrid_reference_chars"] += len(reference)
+                    totals["hybrid_word_edits"] += distance(reference.split(), actual_text.split())
+                    totals["hybrid_reference_words"] += len(reference.split())
                 extracted = fields(actual_text)
                 for name, metric in (("policy_number", "policy"), ("amount", "amount")):
                     if expected[name] is not None:
@@ -123,11 +129,14 @@ def evaluate(sessions, document_id, fixtures=FIXTURES):
                             "run_status": run.status, "extractor_config": run.config, "pages": pages})
     totals["ocr_cer"] = totals["ocr_char_edits"] / totals["ocr_reference_chars"] if totals["ocr_reference_chars"] else None
     totals["ocr_wer"] = totals["ocr_word_edits"] / totals["ocr_reference_words"] if totals["ocr_reference_words"] else None
+    totals["hybrid_cer"] = totals["hybrid_char_edits"] / totals["hybrid_reference_chars"] if totals["hybrid_reference_chars"] else None
+    totals["hybrid_wer"] = totals["hybrid_word_edits"] / totals["hybrid_reference_words"] if totals["hybrid_reference_words"] else None
     passed = (totals["pages"] > 0 and totals["method_correct"] == totals["pages"]
               and totals["provenance_correct"] == totals["pages"]
               and totals["policy_correct"] == totals["policy_total"] > 0
               and totals["amount_correct"] == totals["amount_total"] > 0
               and totals["ocr_cer"] is not None and totals["ocr_cer"] <= 0.2
+              and totals["hybrid_cer"] is not None and totals["hybrid_cer"] <= 0.2
               and all(item.get("actual_error") == item.get("expected_error") and item.get("no_new_run")
                       for item in results if "expected_error" in item))
     return {"source_type": "policy", "document_id": str(document_id), "totals": totals,
