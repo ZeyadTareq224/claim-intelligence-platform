@@ -23,7 +23,9 @@ A newly accepted run moves from `pending` to `processing`, then to `completed`, 
 
 Database uniqueness identifies a run by source document and business version, source hash, and extraction configuration hash. A completed repeat returns the same run. A retry processes only failed or missing pages, preserves successful and blank pages, and replaces a failed page transactionally. Changed source bytes, extractor version, or configuration create a separate run and leave prior provenance intact.
 
-A PostgreSQL session advisory lock claims the identity before creating or resuming a run. A competing attempt receives `processing_in_progress`. The claim and writes share a database connection; losing that connection stops writes and releases the claim. A later attempt can resume an interrupted run. This policy requires a direct PostgreSQL connection or session pooling, not a transaction-pooling proxy.
+A PostgreSQL session advisory lock claims the identity before creating or resuming a run. For claim documents, the claim covers all source and extraction versions of that document; for policy documents it covers the individual run identity. A competing attempt receives `processing_in_progress`. The claim and writes share a database connection; losing that connection stops writes and releases the claim. A later attempt can resume an interrupted run. This policy requires a direct PostgreSQL connection or session pooling, not a transaction-pooling proxy.
+
+A claim document's `processing_status` mirrors the most recently attempted run: pending and processing transitions, the terminal completed/partial/failed result, or the result of a completed run reused on repeat. Claim-wide serialization prevents older concurrent attempts from overwriting that status. The migration backfills existing claim documents from the most recently started or created run; documents with no run retain their existing status. A downgrade to the old four-value status constraint is rejected while `partial` claim statuses exist, rather than silently changing them.
 
 ## Observability and limitations
 

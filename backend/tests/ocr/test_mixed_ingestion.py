@@ -69,3 +69,4 @@ def test_cli_ingests_mixed_pdf_and_reuses_run(source, monkeypatch, tmp_path, cap
     assert repeated["run_id"] == result["run_id"]
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(DocumentProcessingRun).where(DocumentProcessingRun.claim_document_id == document_id)) == 1
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.COMPLETED

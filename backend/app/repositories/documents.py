@@ -3,10 +3,10 @@ from contextlib import contextmanager
 import hashlib
 import json
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, sessionmaker
 
-from app.domain.models import ClaimDocument, PolicyDocument, DocumentProcessingRun, ExtractedPage, ExtractedBlock
+from app.domain.models import ClaimDocument, PolicyDocument, DocumentProcessingRun, ExtractedPage, ExtractedBlock, ProcessingStatus
 from app.services.pdf_input import PdfInputError
 
 
@@ -21,8 +21,9 @@ class DocumentRepository:
 
     @contextmanager
     def claim(self, source, config_hash):
-        identity = [source.source_type, str(source.document_id), source.policy_document_version,
-                    source.sha256, config_hash]
+        identity = [source.source_type, str(source.document_id)]
+        if source.source_type == "policy":
+            identity.extend([source.policy_document_version, source.sha256, config_hash])
         digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).digest()
         key = int.from_bytes(digest[:8], "big", signed=True)
         with self.sessions() as session:
@@ -84,17 +85,38 @@ class DocumentRepository:
                 config=config, status="pending", page_count=source.page_count,
             )
             session.add(run)
+            if source.source_type == "claim":
+                document.processing_status = ProcessingStatus.PENDING
             session.flush()
             return run.id
+
+    @staticmethod
+    def _sync_claim(session, run, status):
+        if run.claim_document_id is not None:
+            document = session.get(ClaimDocument, run.claim_document_id, with_for_update=True)
+            if document is None:
+                raise PdfInputError("document_not_found")
+            document.processing_status = ProcessingStatus(status)
 
     def start(self, run_id):
         self._check_claim()
         with self.sessions.begin() as session:
-            result = session.execute(update(DocumentProcessingRun).where(
-                DocumentProcessingRun.id == run_id, DocumentProcessingRun.status.in_(("pending", "processing", "partial", "failed"))
-            ).values(status="processing", started_at=func.now(), finished_at=None, error_code=None))
-            if result.rowcount != 1:
+            run = session.get(DocumentProcessingRun, run_id, with_for_update=True)
+            if run is None or run.status not in ("pending", "processing", "partial", "failed"):
                 raise PdfInputError("run_not_retryable")
+            run.status = "processing"
+            run.started_at = func.now()
+            run.finished_at = None
+            run.error_code = None
+            self._sync_claim(session, run, run.status)
+
+    def reuse_completed(self, run_id):
+        self._check_claim()
+        with self.sessions.begin() as session:
+            run = session.get(DocumentProcessingRun, run_id, with_for_update=True)
+            if run is None or run.status != "completed":
+                raise PdfInputError("run_not_completed")
+            self._sync_claim(session, run, run.status)
 
     def save_page(self, run_id, page):
         self._check_claim()
@@ -135,6 +157,7 @@ class DocumentRepository:
             run.status = ("partial" if usable else "failed") if failed else "completed"
             run.error_code = error_code
             run.finished_at = func.now()
+            self._sync_claim(session, run, run.status)
             return run.status
 
     @staticmethod

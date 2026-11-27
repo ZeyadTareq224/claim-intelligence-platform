@@ -79,6 +79,7 @@ class DocumentIngestionService:
             else:
                 run_id, status, completed = existing
                 if status == "completed":
+                    repository.reuse_completed(run_id)
                     logger.info("document_processing_reused source_type=%s document_id=%s run_id=%s status=%s page_count=%d duration_ms=%d",
                                 source_type, document_id, run_id, status, source.page_count, (time.monotonic() - started) * 1000)
                     return run_id

@@ -264,6 +264,8 @@ def test_unexpected_extraction_error_marks_partial(sessions, tmp_path):
     result = service.repository.inspect("claim", document_id)[0]
     assert result["status"] == "partial" and result["error_code"] == "extraction_failed"
     assert result["finished_at"] and result["pages"][0]["preview"] == "saved"
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PARTIAL
 
 
 def test_incomplete_extraction_cannot_complete(sessions, tmp_path):
@@ -393,6 +395,8 @@ def test_retry_after_interruption_keeps_completed_page(sessions, tmp_path):
     with pytest.raises(KeyboardInterrupt):
         service.ingest("claim", document_id, path)
     before = service.repository.inspect("claim", document_id)[0]
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PROCESSING
 
     def resume(data, page_numbers):
         assert page_numbers == {2}
@@ -403,6 +407,8 @@ def test_retry_after_interruption_keeps_completed_page(sessions, tmp_path):
     assert str(run_id) == before["run_id"]
     result = service.repository.inspect("claim", document_id)[0]
     assert result["status"] == "completed" and result["pages"][0]["preview"] == "saved"
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.COMPLETED
 
 
 def test_concurrent_attempt_is_rejected_without_duplicate_run(sessions, tmp_path):
@@ -479,6 +485,8 @@ def test_lost_claim_connection_stops_writes_and_allows_resume(sessions, tmp_path
         service.ingest("claim", document_id, path)
     result = service.repository.inspect("claim", document_id)[0]
     assert result["status"] == "processing" and len(result["pages"]) == 1
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PROCESSING
     monkeypatch.setattr(DocumentRepository, "save_page", original_save)
     service.extractor.iter_bytes = lambda data, page_numbers: iter([PageResult(2, "blank", None, 200, 200, 0)])
     assert str(service.ingest("claim", document_id, path)) == result["run_id"]
@@ -657,3 +665,149 @@ def test_processing_logs_categorized_page_failures(sessions, tmp_path, caplog):
         service.ingest("claim", document_id, path)
     assert "status=partial" in caplog.text and "ocr_timeout" in caplog.text
     assert "Private page text" not in caplog.text and "private.pdf" not in caplog.text
+
+
+@pytest.mark.parametrize("page_one,page_two,expected", [
+    ("completed", "blank", ProcessingStatus.COMPLETED),
+    ("completed", "failed", ProcessingStatus.PARTIAL),
+    ("failed", "blank", ProcessingStatus.FAILED),
+])
+def test_claim_document_status_tracks_run_outcome(sessions, tmp_path, page_one, page_two, expected):
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+
+    def pages(data, page_numbers):
+        with sessions() as session:
+            assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PROCESSING
+        blocks = [TextBlock("kept", "native")] if page_one == "completed" else []
+        yield PageResult(1, page_one, "native" if blocks else "ocr", 200, 200, 0, blocks,
+                         error="ocr_timeout" if page_one == "failed" else None)
+        yield PageResult(2, page_two, "ocr" if page_two == "failed" else None, 200, 200, 0,
+                         error="ocr_timeout" if page_two == "failed" else None)
+
+    service.extractor.iter_bytes = pages
+    run_id = service.ingest("claim", document_id, path)
+    with sessions() as session:
+        run = session.get(DocumentProcessingRun, run_id)
+        document = session.get(ClaimDocument, document_id)
+        assert run.status == expected.value
+        assert document.processing_status == expected
+
+
+def test_claim_status_is_pending_if_interrupted_before_start(sessions, tmp_path, monkeypatch):
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    with sessions.begin() as session:
+        session.get(ClaimDocument, document_id).processing_status = ProcessingStatus.FAILED
+    service = ingestion(sessions, tmp_path)
+
+    def interrupt(self, run_id):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(DocumentRepository, "start", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        service.ingest("claim", document_id, path)
+    with sessions() as session:
+        run = session.scalar(select(DocumentProcessingRun).where(DocumentProcessingRun.claim_document_id == document_id))
+        assert run.status == "pending"
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PENDING
+
+
+def test_claim_status_updates_when_an_older_completed_run_is_reused(sessions, tmp_path):
+    from app.services.pdf_extraction import PageResult
+
+    document_id = make_source(sessions, "claim")
+    original = tmp_path / "original.pdf"
+    later = tmp_path / "later.pdf"
+    make_pdf(original, "First document")
+    make_pdf(later, "Different document")
+    service = ingestion(sessions, tmp_path)
+    completed_id = service.ingest("claim", document_id, original)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
+        PageResult(2, "blank", None, 200, 200, 0),
+    ])
+    failed_id = service.ingest("claim", document_id, later)
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.FAILED
+    service.extractor.iter_bytes = lambda *args: pytest.fail("completed run must be reused")
+    assert service.ingest("claim", document_id, original) == completed_id
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.COMPLETED
+        assert session.get(DocumentProcessingRun, failed_id).status == "failed"
+
+
+def test_concurrent_different_sources_for_same_claim_are_rejected(sessions, tmp_path):
+    from app.services.pdf_input import PdfInputError
+
+    document_id = make_source(sessions, "claim")
+    first, second = tmp_path / "first.pdf", tmp_path / "second.pdf"
+    make_pdf(first, "First version")
+    make_pdf(second, "Second version")
+    service = ingestion(sessions, tmp_path)
+    original = service.extractor.iter_bytes
+
+    def competing(data, page_numbers):
+        with pytest.raises(PdfInputError, match="processing_in_progress"):
+            service.ingest("claim", document_id, second)
+        yield from original(data, page_numbers)
+
+    service.extractor.iter_bytes = competing
+    run_id = service.ingest("claim", document_id, first)
+    with sessions() as session:
+        assert session.get(DocumentProcessingRun, run_id).status == "completed"
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.COMPLETED
+        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun).where(
+            DocumentProcessingRun.claim_document_id == document_id)) == 1
+
+
+def test_processing_policy_does_not_change_claim_document_status(sessions, tmp_path):
+    policy_document_id = make_source(sessions, "policy")
+    claim_document_id = make_source(sessions, "claim")
+    path = tmp_path / "policy.pdf"
+    make_pdf(path)
+    ingestion(sessions, tmp_path).ingest("policy", policy_document_id, path)
+    with sessions() as session:
+        assert session.get(ClaimDocument, claim_document_id).processing_status == ProcessingStatus.PENDING
+
+
+def test_invalid_input_does_not_change_existing_claim_status(sessions, tmp_path):
+    from app.services.pdf_input import PdfInputError
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "invalid.pdf"
+    path.write_bytes(b"invalid PDF")
+    with sessions.begin() as session:
+        session.get(ClaimDocument, document_id).processing_status = ProcessingStatus.FAILED
+    with pytest.raises(PdfInputError, match="invalid_pdf"):
+        ingestion(sessions, tmp_path).ingest("claim", document_id, path)
+    with sessions() as session:
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.FAILED
+        assert session.scalar(select(func.count()).select_from(DocumentProcessingRun).where(
+            DocumentProcessingRun.claim_document_id == document_id)) == 0
+
+
+def test_run_and_claim_status_update_atomically(sessions, tmp_path, monkeypatch):
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    original = DocumentRepository._sync_claim
+
+    def fail_completion(session, run, status):
+        if status == "completed":
+            raise RuntimeError("simulated status write failure")
+        original(session, run, status)
+
+    monkeypatch.setattr(DocumentRepository, "_sync_claim", staticmethod(fail_completion))
+    with pytest.raises(RuntimeError, match="simulated status write failure"):
+        service.ingest("claim", document_id, path)
+    with sessions() as session:
+        run = session.scalar(select(DocumentProcessingRun).where(DocumentProcessingRun.claim_document_id == document_id))
+        assert run.status == "processing"
+        assert session.get(ClaimDocument, document_id).processing_status == ProcessingStatus.PROCESSING
