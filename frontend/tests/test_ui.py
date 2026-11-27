@@ -83,6 +83,8 @@ def test_pdf_upload_validates_and_preserves(ui, monkeypatch, tmp_path):
         assert not ui.exception and not ui.error
         assert any("PDF processed" in item.value for item in ui.success)
         assert [path.read_bytes() for path in tmp_path.iterdir()] == [data]
+        next(item for item in ui.checkbox if item.label == "Show full extracted text").check().run()
+        assert not ui.exception
         from sqlalchemy import func, select
         with Session(engine) as session:
             run = session.scalar(select(DocumentProcessingRun).where(DocumentProcessingRun.policy_document_id == document_id))

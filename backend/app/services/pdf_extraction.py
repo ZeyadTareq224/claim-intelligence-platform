@@ -50,6 +50,19 @@ class TesseractOcr:
         self.language = language
         self.timeout = timeout
 
+    def engine_version(self) -> str:
+        try:
+            # A fixed command records the OCR engine version without invoking a shell.
+            result = subprocess.run(  # nosec
+                ["tesseract", "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                timeout=5, check=True,
+            )
+            line = result.stdout.decode("utf-8", errors="replace").splitlines()[0]
+            match = re.match(r"tesseract\s+([A-Za-z0-9._+~-]{1,80})(?:\s|$)", line, re.IGNORECASE)
+            return match.group(1) if match else "unknown"
+        except (OSError, subprocess.SubprocessError, IndexError):
+            return "unavailable"
+
     def recognize(self, image: bytes) -> list[tuple[str, tuple[int, int, int, int], float]]:
         try:
             # The executable is fixed, language is validated, and no shell is used.

@@ -192,7 +192,8 @@ def upload_pdf(sessions, session):
         except (OSError, RuntimeError, ValueError, SQLAlchemyError):
             st.error("PDF processing failed. Check the run history below and the database connection.")
 
-    runs = repository.inspect(source_type, document_id)
+    include_text = st.checkbox("Show full extracted text")
+    runs = repository.inspect(source_type, document_id, include_text=include_text)
     if not runs:
         st.info("No processing runs for this document yet.")
     for run in runs:
@@ -207,7 +208,9 @@ def upload_pdf(sessions, session):
                     st.caption(f"Extraction reason: {page['reason']}")
                 if page["error"]:
                     st.error(f"Page error: {page['error']}")
-                if page["preview"]:
+                if include_text and page["blocks"]:
+                    st.text("\n".join(block["raw_text"] for block in page["blocks"]))
+                elif page["preview"]:
                     st.text(page["preview"])
                 if page["blocks"]:
                     st.caption(f"Page size: {page['width']} × {page['height']} points · Rotation: {page['rotation']}°")

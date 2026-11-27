@@ -163,3 +163,13 @@ def test_pdf_validation_timeout_stops_inspector_before_storage(tmp_path, monkeyp
         svc.validate("policy", document_id, path)
     assert processes[0].poll() is not None
     assert not svc.storage_dir.exists()
+
+
+def test_input_limits_are_configurable(monkeypatch, tmp_path):
+    monkeypatch.setenv("PDF_STORAGE_DIR", str(tmp_path / "pdfs"))
+    monkeypatch.setenv("PDF_MAX_BYTES", "1234")
+    monkeypatch.setenv("PDF_MAX_PAGES", "7")
+    monkeypatch.setenv("PDF_NATIVE_TIMEOUT_SECONDS", "3")
+    svc = PdfInputService.from_environment(None)
+    assert svc.storage_dir == tmp_path / "pdfs"
+    assert svc.max_bytes == 1234 and svc.max_pages == 7 and svc.inspector.native_timeout == 3

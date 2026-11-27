@@ -587,3 +587,73 @@ def test_changing_native_timeout_creates_distinct_run(sessions, tmp_path):
         assert first != second and first_run.source_hash == second_run.source_hash
         assert first_run.config_hash != second_run.config_hash
         assert first_run.config["native_timeout"] == 30 and second_run.config["native_timeout"] == 35
+
+
+def test_processing_logs_identifiers_and_counts_without_document_text(sessions, tmp_path, caplog):
+    import logging
+
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "private-name.pdf"
+    make_pdf(path, "Sensitive synthetic policy text")
+    service = ingestion(sessions, tmp_path)
+    with caplog.at_level(logging.INFO, logger="app.services.document_ingestion"):
+        run_id = service.ingest("policy", document_id, path)
+        assert service.ingest("policy", document_id, path) == run_id
+    logs = caplog.text
+    assert str(document_id) in logs and str(run_id) in logs
+    assert "page_count=2" in logs and "methods=" in logs and "duration_ms=" in logs
+    assert "document_processing_reused" in logs
+    assert "Sensitive synthetic policy text" not in logs
+    assert "private-name.pdf" not in logs
+
+
+def test_inspection_includes_full_text_only_when_requested(sessions, tmp_path, monkeypatch, capsys):
+    import json
+    from app import cli
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "test.pdf"
+    make_pdf(path, "Text visible only when explicitly requested")
+    service = ingestion(sessions, tmp_path)
+    service.ingest("claim", document_id, path)
+    monkeypatch.setattr(cli, "make_sessions", lambda: sessions)
+    args = ["inspect-document", "--source-type", "claim", "--document-id", str(document_id)]
+    assert cli.main(args) == 0
+    default = json.loads(capsys.readouterr().out)
+    assert "raw_text" not in default["runs"][0]["pages"][0]["blocks"][0]
+    assert cli.main(args + ["--full-text"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert "Text visible only" in full["runs"][0]["pages"][0]["blocks"][0]["raw_text"]
+
+
+def test_changing_tesseract_version_creates_distinct_run(sessions, tmp_path, monkeypatch):
+    document_id = make_source(sessions, "policy")
+    path = tmp_path / "test.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    monkeypatch.setattr(service.extractor.ocr, "engine_version", lambda: "5.0")
+    first = service.ingest("policy", document_id, path)
+    monkeypatch.setattr(service.extractor.ocr, "engine_version", lambda: "5.1")
+    second = service.ingest("policy", document_id, path)
+    with sessions() as session:
+        one, two = session.get(DocumentProcessingRun, first), session.get(DocumentProcessingRun, second)
+        assert first != second and one.config_hash != two.config_hash
+        assert one.config["tesseract_version"] == "5.0" and two.config["tesseract_version"] == "5.1"
+
+
+def test_processing_logs_categorized_page_failures(sessions, tmp_path, caplog):
+    import logging
+    from app.services.pdf_extraction import PageResult, TextBlock
+
+    document_id = make_source(sessions, "claim")
+    path = tmp_path / "private.pdf"
+    make_pdf(path)
+    service = ingestion(sessions, tmp_path)
+    service.extractor.iter_bytes = lambda data, page_numbers: iter([
+        PageResult(1, "completed", "native", 200, 200, 0, [TextBlock("Private page text", "native")]),
+        PageResult(2, "failed", "ocr", 200, 200, 0, error="ocr_timeout"),
+    ])
+    with caplog.at_level(logging.INFO, logger="app.services.document_ingestion"):
+        service.ingest("claim", document_id, path)
+    assert "status=partial" in caplog.text and "ocr_timeout" in caplog.text
+    assert "Private page text" not in caplog.text and "private.pdf" not in caplog.text

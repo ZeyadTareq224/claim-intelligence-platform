@@ -138,7 +138,7 @@ class DocumentRepository:
             return run.status
 
     @staticmethod
-    def _details(run):
+    def _details(run, include_text=False):
         return {"run_id": str(run.id), "status": run.status, "source_hash": run.source_hash,
                 "source_type": "policy" if run.policy_document_id is not None else "claim",
                 "document_id": str(run.policy_document_id or run.claim_document_id),
@@ -153,7 +153,8 @@ class DocumentRepository:
                            "preview": " ".join(block.raw_text for block in page.blocks)[:160],
                            "blocks": [{"index": block.block_index, "method": block.method,
                                        "bbox": block.bbox, "confidence": block.confidence,
-                                       "preview": block.raw_text[:160]} for block in page.blocks]}
+                                       "preview": block.raw_text[:160],
+                                       **({"raw_text": block.raw_text} if include_text else {})} for block in page.blocks]}
                           for page in run.pages]}
 
     def get_run(self, run_id):
@@ -164,7 +165,7 @@ class DocumentRepository:
                 raise PdfInputError("run_not_found")
             return self._details(run)
 
-    def inspect(self, source_type, document_id):
+    def inspect(self, source_type, document_id, include_text=False):
         if source_type not in ("policy", "claim"):
             raise PdfInputError("invalid_source_type")
         model = PolicyDocument if source_type == "policy" else ClaimDocument
@@ -176,4 +177,4 @@ class DocumentRepository:
             runs = session.scalars(select(DocumentProcessingRun).where(source_column == document_id)
                 .options(selectinload(DocumentProcessingRun.pages).selectinload(ExtractedPage.blocks))
                 .order_by(DocumentProcessingRun.created_at.desc(), DocumentProcessingRun.id)).all()
-            return [self._details(run) for run in runs]
+            return [self._details(run, include_text=include_text) for run in runs]

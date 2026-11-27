@@ -274,3 +274,12 @@ def test_page_worker_exits_when_parent_is_killed(tmp_path):
             parent.wait()
         parent.stdout.close()
         parent.stderr.close()
+
+
+def test_tesseract_version_is_recorded_without_raw_engine_output():
+    from types import SimpleNamespace
+
+    with patch("app.services.pdf_extraction.subprocess.run", return_value=SimpleNamespace(stdout=b"tesseract 5.5.0\nextra details")):
+        assert TesseractOcr().engine_version() == "5.5.0"
+    with patch("app.services.pdf_extraction.subprocess.run", side_effect=FileNotFoundError()):
+        assert TesseractOcr().engine_version() == "unavailable"

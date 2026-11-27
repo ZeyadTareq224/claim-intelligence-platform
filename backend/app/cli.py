@@ -1,6 +1,7 @@
 """Command-line entry point for structured claim extraction."""
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 from uuid import UUID
@@ -36,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     inspect = commands.add_parser("inspect-document", help="inspect document processing runs")
     inspect.add_argument("--source-type", choices=("policy", "claim"), required=True)
     inspect.add_argument("--document-id", type=UUID, required=True)
+    inspect.add_argument("--full-text", action="store_true", help="include raw extracted block text")
     args = parser.parse_args(argv)
     try:
         if args.command == "validate-pdf":
@@ -45,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
                               "sha256": result.sha256, "page_count": result.page_count}))
             return 0
         if args.command == "ingest-pdf":
+            logging.basicConfig(level=logging.INFO)
             sessions = make_sessions()
             run_id = DocumentIngestionService.from_environment(sessions).ingest(
                 args.source_type, args.document_id, args.file)
@@ -52,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["status"] == "completed" else 1
         if args.command == "inspect-document":
-            runs = DocumentRepository(make_sessions()).inspect(args.source_type, args.document_id)
+            runs = DocumentRepository(make_sessions()).inspect(args.source_type, args.document_id, include_text=args.full_text)
             print(json.dumps({"source_type": args.source_type, "document_id": str(args.document_id),
                               "runs": runs}, ensure_ascii=False, indent=2))
             return 0

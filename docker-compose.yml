@@ -8,6 +8,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-claim}:${POSTGRES_PASSWORD:-claim_local}@db:5432/${POSTGRES_DB:-claims}
       PDF_STORAGE_DIR: /var/lib/claim-platform/pdfs
+      PDF_MAX_BYTES: ${PDF_MAX_BYTES:-26214400}
+      PDF_MAX_PAGES: ${PDF_MAX_PAGES:-200}
       PDF_NATIVE_TIMEOUT_SECONDS: ${PDF_NATIVE_TIMEOUT_SECONDS:-30}
       PDF_OCR_LANGUAGE: ${PDF_OCR_LANGUAGE:-eng}
       PDF_OCR_DPI: ${PDF_OCR_DPI:-200}
